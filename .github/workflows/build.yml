@@ -1,0 +1,35 @@
+name: "Build flake - push to cachix"
+on:
+  workflow_dispatch:
+  pull_request:
+
+jobs:
+  build_pullix:
+    runs-on: ubuntu-latest
+    env:
+      NIXPKGS_ALLOW_BROKEN: "1"
+      NIXPKGS_ALLOW_UNFREE: "1"
+      NIXPKGS_ALLOW_INSECURE: "1"
+      NIX_CONFIG: |
+        experimental-features = nix-command flakes
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - name: mount Nix store on larger partition
+        # on the Linux runner `/` doesn't have enough space, but there's a `/mnt` which does.
+        if: runner.os == 'Linux'
+        run: |
+          sudo mkdir /nix /mnt/nix
+          sudo mount --bind /mnt/nix /nix
+      - uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+      - name: Build packages
+        run: |
+          nix build --accept-flake-config .#packages.x86_64-linux.copilot
+          nix build --accept-flake-config .#packages.x86_64-linux.litellm-prisma
+          nix build --accept-flake-config .#packages.x86_64-linux.headroom
+      - name: Check
+        run: |
+          nix flake check
