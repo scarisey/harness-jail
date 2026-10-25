@@ -23,7 +23,7 @@ in {
 
     systemd.user.services.litellm = {
       Unit = {
-        Description = "Proxy LiteLLM Utilisateur (sandboxed via Bubblewrap)";
+        Description = "LiteLLM user proxy (sandboxed via Bubblewrap)";
         After = ["network.target"];
       };
 

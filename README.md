@@ -285,7 +285,7 @@ Available as `nixosModules.headroom`, `homeManagerModules.headroom`, and
 | `host` | string | `"127.0.0.1"` | Listen address. |
 | `port` | port | `8787` | Listen port. |
 | `environment` | attrs of string | `{}` | Environment variables for Headroom. |
-| `environmentFile` | path or null | `null` | Env file loaded inside the sandbox. |
+| `environmentFile` | string or null | `null` | Env file loaded inside the sandbox. |
 | `extraFlags` | list of string | `[]` | Extra flags passed to `headroom proxy`. |
 | `readOnlyPaths` | list of path | `[]` | Extra read-only mounts. |
 | `readWritePaths` | list of path | `[]` | Extra read-write mounts. |
@@ -302,7 +302,7 @@ Available as `nixosModules.litellm`, `homeManagerModules.litellm`, and
 | `host` | string | `"127.0.0.1"` | Listen address. |
 | `port` | port | `4000` | Listen port. |
 | `environment` | attrs of string | `{}` | Environment variables for LiteLLM. |
-| `environmentFile` | path or null | `null` | Env file bind-mounted at `/etc/litellm/env`. |
+| `environmentFile` | string or null | `null` | Env file bind-mounted at `/etc/litellm/env`. |
 | `extraFlags` | list of string | `[]` | Extra flags passed to `litellm`. |
 | `settings` | JSON value | `{}` | LiteLLM config, written as JSON. |
 
@@ -346,9 +346,9 @@ credentials and other settings with `environment` or `environmentFile`.
 
 `environmentFile` is bind-mounted read-only at `/etc/headroom/env` and sourced
 inside the sandbox. Values in `environment` take precedence over the file. Use a
-string path such as `/run/secrets/headroom.env`; a Nix path literal may be copied
-into the Nix store. Add extra host paths with `readOnlyPaths` and
-`readWritePaths`; extra `headroom proxy` arguments go in `extraFlags`.
+string path such as `/run/secrets/headroom.env`; the value is not copied into the
+Nix store. Add extra host paths with `readOnlyPaths` and `readWritePaths`; extra
+`headroom proxy` arguments go in `extraFlags`.
 
 ## LiteLLM proxy
 
@@ -454,17 +454,16 @@ outputs if you need it.
 }
 ```
 
-The file is read at runtime and is not copied into the Nix store when referenced
-as a string path. Use a runtime path such as `/run/secrets/copilot.env`; a Nix
-path literal may be copied into the store. The file should contain
-shell-compatible assignments:
+The file is read at runtime and is not copied into the Nix store. Use a runtime
+path such as `/run/secrets/copilot.env`. The file should contain shell-compatible
+assignments:
 
 ```sh
 export COPILOT_GITHUB_TOKEN="ghp_..."
 ```
 
 The same pattern works for Headroom. For LiteLLM, see the current
-`environmentFile` limitation below.
+`environmentFile` limitation above.
 
 ### Give the agent access to a project
 

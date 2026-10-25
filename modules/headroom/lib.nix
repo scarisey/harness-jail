@@ -37,7 +37,7 @@ in rec {
     };
 
     environmentFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
+      type = lib.types.nullOr lib.types.str;
       default = null;
       example = "/run/secrets/headroom.env";
       description = ''
@@ -108,7 +108,7 @@ in rec {
 
     envFileBindFlags = lib.optionals (cfg.environmentFile != null) [
       "--ro-bind"
-      (toString cfg.environmentFile)
+      cfg.environmentFile
       "/etc/headroom/env"
     ];
 

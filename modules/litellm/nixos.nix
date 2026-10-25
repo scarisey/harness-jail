@@ -19,7 +19,7 @@ in {
     users.users.litellm = {
       isSystemUser = true;
       group = "litellm";
-      description = "Utilisateur pour le démon LiteLLM";
+      description = "User for the LiteLLM daemon";
       home = "/var/lib/litellm";
       createHome = true;
     };

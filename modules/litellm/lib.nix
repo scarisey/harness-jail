@@ -11,45 +11,45 @@ in rec {
     package = lib.mkOption {
       type = lib.types.package;
       default = pkgs.litellm;
-      description = "Paquet LiteLLM à exécuter.";
+      description = "LiteLLM package to run.";
     };
 
     host = lib.mkOption {
       type = lib.types.str;
       default = "127.0.0.1";
-      description = "Adresse IP/Hôte d'écoute du serveur HTTP.";
+      description = "Address the HTTP server listens on.";
     };
 
     port = lib.mkOption {
       type = lib.types.port;
       default = 4000;
-      description = "Port d'écoute du serveur HTTP.";
+      description = "Port the HTTP server listens on.";
     };
 
     environment = lib.mkOption {
       type = lib.types.attrsOf lib.types.str;
       default = {};
       example = {LITELLM_LOG = "INFO";};
-      description = "Variables d'environnement passées à LiteLLM.";
+      description = "Environment variables passed to LiteLLM.";
     };
 
     environmentFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
+      type = lib.types.nullOr lib.types.str;
       default = null;
       example = "/var/src/secrets/litellm.env";
-      description = "Chemin vers un fichier d'environnement (.env) contenant les secrets (clés API, DATABASE_URL).";
+      description = "Path to an environment (.env) file containing secrets (API keys, DATABASE_URL).";
     };
 
     extraFlags = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [];
-      description = "Arguments supplémentaires transmis à la commande `litellm`.";
+      description = "Additional arguments passed to the `litellm` command.";
     };
 
     settings = lib.mkOption {
       type = jsonFormat.type;
       default = {};
-      description = "Configuration sous forme de structure Nix injectée dans LiteLLM.";
+      description = "Configuration as a Nix structure injected into LiteLLM.";
     };
   };
 
@@ -65,11 +65,11 @@ in rec {
 
     envFileBindFlags = lib.optionals (cfg.environmentFile != null) [
       "--ro-bind"
-      (toString cfg.environmentFile)
+      cfg.environmentFile
       "/etc/litellm/env"
     ];
 
-    # Binaires Prisma compilés et patchés pour Nix
+    # Prisma binaries compiled and patched for Nix
     prismaEngines = pkgs.prisma-engines_6;
     queryEnginePath = "${prismaEngines}/bin/query-engine";
     schemaEnginePath = "${prismaEngines}/bin/schema-engine";
@@ -97,7 +97,7 @@ in rec {
         --dev /dev \
         --tmpfs /tmp \
         --ro-bind /nix/store /nix/store \
-        --ro-bind /etc/ssl/certs /etc/ssl/certs \
+        --ro-bind "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" /etc/ssl/certs/ca-certificates.crt \
         --ro-bind /etc/resolv.conf /etc/resolv.conf \
         --ro-bind-try /etc/hosts /etc/hosts \
         --ro-bind-try /etc/nsswitch.conf /etc/nsswitch.conf \
@@ -109,6 +109,9 @@ in rec {
         --clearenv \
         --setenv PATH "${cfg.package}/bin:${prismaEngines}/bin:${pkgs.prisma_6}/bin:${pkgs.coreutils}/bin:${lib.getBin pkgs.openssl}/bin" \
         --setenv HOME /tmp/litellm-state \
+        --setenv SSL_CERT_FILE /etc/ssl/certs/ca-certificates.crt \
+        --setenv REQUESTS_CA_BUNDLE /etc/ssl/certs/ca-certificates.crt \
+        --setenv CURL_CA_BUNDLE /etc/ssl/certs/ca-certificates.crt \
         --setenv PYTHONUNBUFFERED 1 \
         --setenv PRISMA_OFFLINE_MODE true \
         --setenv PRISMA_CLI_PATH "${pkgs.prisma_6}/bin/prisma" \
