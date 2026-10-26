@@ -25,35 +25,31 @@ wheel_field() {
 # Check if update is needed
 if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
   tmpFile=$(mktemp)
+  trap 'rm -f "$tmpFile"' EXIT
 
   echo "Fetching hashes for all platforms..."
   export LATEST_VERSION
   URL_LINUX_X64=$(wheel_field 'manylinux.*x86_64\.whl$' '.url')
   URL_LINUX_ARM64=$(wheel_field 'manylinux.*aarch64\.whl$' '.url')
-  URL_DARWIN_X64=$(wheel_field 'macosx.*x86_64\.whl$' '.url')
   URL_DARWIN_ARM64=$(wheel_field 'macosx.*arm64\.whl$' '.url')
 
   SHA256_HEX_LINUX_X64=$(wheel_field 'manylinux.*x86_64\.whl$' '.digests.sha256')
   SHA256_HEX_LINUX_ARM64=$(wheel_field 'manylinux.*aarch64\.whl$' '.digests.sha256')
-  SHA256_HEX_DARWIN_X64=$(wheel_field 'macosx.*x86_64\.whl$' '.digests.sha256')
   SHA256_HEX_DARWIN_ARM64=$(wheel_field 'macosx.*arm64\.whl$' '.digests.sha256')
 
   SHA256_LINUX_X64=$(to_sri "$SHA256_HEX_LINUX_X64")
   SHA256_LINUX_ARM64=$(to_sri "$SHA256_HEX_LINUX_ARM64")
-  SHA256_DARWIN_X64=$(to_sri "$SHA256_HEX_DARWIN_X64")
   SHA256_DARWIN_ARM64=$(to_sri "$SHA256_HEX_DARWIN_ARM64")
 
   jq \
     --arg v   "$LATEST_VERSION" \
     --arg lxu "$URL_LINUX_X64" \
     --arg lau "$URL_LINUX_ARM64" \
-    --arg dxu "$URL_DARWIN_X64" \
     --arg dau "$URL_DARWIN_ARM64" \
     --arg lx  "$SHA256_LINUX_X64" \
     --arg la  "$SHA256_LINUX_ARM64" \
-    --arg dx  "$SHA256_DARWIN_X64" \
     --arg da  "$SHA256_DARWIN_ARM64" \
-    '.version=$v | .urlLinux_x64=$lxu | .urlLinux_arm64=$lau | .urlDarwin_x64=$dxu | .urlDarwin_arm64=$dau | .sha256Linux_x64=$lx | .sha256Linux_arm64=$la | .sha256Darwin_x64=$dx | .sha256Darwin_arm64=$da' \
+    '.version=$v | .urlLinux_x64=$lxu | .urlLinux_arm64=$lau | .urlDarwin_arm64=$dau | .sha256Linux_x64=$lx | .sha256Linux_arm64=$la | .sha256Darwin_arm64=$da' \
     headroom-versions.json > "$tmpFile"
   cp "$tmpFile" headroom-versions.json
   rm -f "$tmpFile"

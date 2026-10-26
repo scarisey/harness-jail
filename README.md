@@ -47,8 +47,8 @@ Network access and extra host paths are opt-in.
 - NixOS, Home Manager, or devenv, depending on which module you use.
 - Bubblewrap itself is added automatically; you do not need to install it.
 
-Package outputs are declared for Linux and macOS systems, but only Linux is
-tested and the sandbox modules are intended for Linux.
+Package outputs are declared for Linux and Apple Silicon macOS, but only Linux
+is tested and the sandbox modules are intended for Linux.
 
 ## Quick start
 
@@ -196,7 +196,7 @@ state stored there persists between runs.
 | Home Manager | `~/.local/state/harness-jail` |
 | devenv | Required — no default |
 
-Apart from the sandbox plumbing (`/nix`, `/dev`, `/proc`, `/tmp`, and the
+Apart from the sandbox plumbing (`/nix/store`, `/dev`, `/proc`, `/tmp`, and the
 resolver and CA files), only `homeDir`, `readOnlyPaths`, and `readWritePaths` are
 exposed. The host home directory and its credentials are not visible unless you
 explicitly mount them. In devenv, the project root is added to the read-write
@@ -388,7 +388,10 @@ sandboxed proxy with a declarative configuration:
 Liveness is exposed at `/health/liveliness`.
 
 Values in `environment` become part of the Nix store. The example above uses
-placeholders; do not commit real credentials to a Nix file.
+placeholders; do not commit real credentials to a Nix file. Use
+`environmentFile` for secrets: it is bind-mounted read-only at
+`/etc/litellm/env` and sourced inside the sandbox at runtime. Explicit values in
+`environment` take precedence over the file.
 
 The LiteLLM sandbox always shares the host network namespace so it can reach
 model providers and databases. The service includes a Nix-compatible Prisma
@@ -405,10 +408,6 @@ engines at runtime.
 > }
 > ```
 
-> **Current limitation:** `environmentFile` is bind-mounted at
-> `/etc/litellm/env`, but it is not yet sourced inside the sandbox. Use
-> `environment` for values that must reach the process.
-
 ## Packages and overlay
 
 The flake exports:
@@ -423,7 +422,7 @@ The flake exports:
 Build a package directly:
 
 ```sh
-nix build .#copilot
+NIXPKGS_ALLOW_UNFREE=1 nix build --impure .#copilot
 nix build .#headroom
 ```
 
@@ -437,6 +436,9 @@ or use the overlay:
 
 `overlays.default` does **not** add `litellm-prisma`; reference it from the flake
 outputs if you need it.
+
+`copilot` is unfree. Enable it with `nixpkgs.config.allowUnfree = true`, or set
+`NIXPKGS_ALLOW_UNFREE=1` when building it directly.
 
 ## Recipes
 
@@ -462,8 +464,7 @@ assignments:
 export COPILOT_GITHUB_TOKEN="ghp_..."
 ```
 
-The same pattern works for Headroom. For LiteLLM, see the current
-`environmentFile` limitation above.
+The same pattern works for Headroom and LiteLLM.
 
 ### Give the agent access to a project
 
@@ -594,12 +595,6 @@ Disable the upstream module before importing this one:
 }
 ```
 
-### `environmentFile` does not work with LiteLLM
-
-This is a known limitation in the current module. The file is mounted, but not
-sourced. Use `environment` or a wrapper that exports the values before starting
-the service.
-
 ### The sandbox modules do not work on macOS
 
 Bubblewrap requires Linux. Some packages may build on macOS, but the sandbox
@@ -609,10 +604,10 @@ modules do not.
 
 ```sh
 # Evaluate and run the NixOS VM tests (Linux)
-nix flake check
+NIXPKGS_ALLOW_UNFREE=1 nix flake check --impure
 
 # Build individual packages
-nix build .#copilot
+NIXPKGS_ALLOW_UNFREE=1 nix build --impure .#copilot
 nix build .#headroom
 
 # Update package versions
@@ -624,7 +619,7 @@ nix develop .#updateShell
 nix fmt
 ```
 
-The `updateShell` includes `nodejs` and `jq` and prints the available `update.sh`
-scripts. The update scripts also need `nix`, `curl`, and `npm` where applicable.
+The `updateShell` includes `nix`, `curl`, `nodejs`, and `jq`, and prints the
+available `update.sh` scripts.
 
 The flake's checks are NixOS VM tests and therefore run only on Linux.

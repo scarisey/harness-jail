@@ -2,6 +2,8 @@ name: "Build flake - push to cachix"
 on:
   workflow_dispatch:
   pull_request:
+  push:
+    branches: [main]
 
 jobs:
   build_pullix:
@@ -27,9 +29,9 @@ jobs:
           nix_path: nixpkgs=channel:nixos-unstable
       - name: Build packages
         run: |
-          nix build --accept-flake-config .#packages.x86_64-linux.copilot
-          nix build --accept-flake-config .#packages.x86_64-linux.litellm-prisma
-          nix build --accept-flake-config .#packages.x86_64-linux.headroom
+          nix build --impure --accept-flake-config .#packages.x86_64-linux.copilot
+          nix build --impure --accept-flake-config .#packages.x86_64-linux.litellm-prisma
+          nix build --impure --accept-flake-config .#packages.x86_64-linux.headroom
       - name: Check
         run: |
-          nix flake check
+          nix flake check --impure

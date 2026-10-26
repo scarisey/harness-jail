@@ -19,8 +19,16 @@ pkgs.testers.nixosTest {
     services.harness-jail = {
       enable = true;
       daemon = false;
-      package = pkgs.hello;
-      command = "hello";
+      package = pkgs.writeShellScriptBin "sandbox-check" ''
+        set -eu
+        test -r /nix/store
+        test ! -e /nix/var/nix/daemon-socket/socket
+        test "$FILE_VALUE" = "value with spaces and 'quotes'"
+        test "$EXPLICIT" = "from-environment"
+      '';
+      command = "sandbox-check";
+      environmentFile = "/run/harness.env";
+      environment.EXPLICIT = "from-environment";
     };
   };
 
@@ -28,6 +36,7 @@ pkgs.testers.nixosTest {
     machine.start()
     machine.fail("systemctl status harness-jail.service")
     machine.succeed("id harness-jail")
+    machine.succeed("cat > /run/harness.env <<'EOF'\nFILE_VALUE=\"value with spaces and 'quotes'\"\nEOF")
     machine.succeed("harness")
   '';
 }

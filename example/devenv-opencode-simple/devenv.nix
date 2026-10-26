@@ -16,7 +16,7 @@
     enableNetwork = true;
     args = ["--standalone"];
     clearEnv = true;
-    homeDir = /tmp/home;
+    homeDir = ./.home;
     readWritePaths = [
       ../../.
     ];

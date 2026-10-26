@@ -3,7 +3,6 @@
   lib,
 }: let
   jsonFormat = pkgs.formats.json {};
-  prismaOverlay = pkgs.callPackage ../../packages/litellm-prisma {};
 in rec {
   mkOptions = {
     enable = lib.mkEnableOption "Service proxy LiteLLM (sandboxed via Bubblewrap)";
@@ -11,7 +10,7 @@ in rec {
     package = lib.mkOption {
       type = lib.types.package;
       default = pkgs.litellm;
-      description = "LiteLLM package to run.";
+      description = "LiteLLM package to run. Custom packages must expose the LiteLLM source tree for Prisma client generation.";
     };
 
     host = lib.mkOption {
@@ -37,7 +36,11 @@ in rec {
       type = lib.types.nullOr lib.types.str;
       default = null;
       example = "/var/src/secrets/litellm.env";
-      description = "Path to an environment (.env) file containing secrets (API keys, DATABASE_URL).";
+      description = ''
+        Path to an environment (.env) file containing secrets (API keys,
+        DATABASE_URL). The file is bind-mounted at /etc/litellm/env and sourced
+        inside the sandbox.
+      '';
     };
 
     extraFlags = lib.mkOption {
@@ -47,7 +50,7 @@ in rec {
     };
 
     settings = lib.mkOption {
-      type = jsonFormat.type;
+      inherit (jsonFormat) type;
       default = {};
       description = "Configuration as a Nix structure injected into LiteLLM.";
     };
@@ -58,6 +61,9 @@ in rec {
     stateDir,
   }: let
     configFile = jsonFormat.generate "litellm-config.json" cfg.settings;
+    prismaOverlay = pkgs.callPackage ../../packages/litellm-prisma {litellm = cfg.package;};
+
+    environmentAssignments = lib.mapAttrsToList (name: value: "${name}=${value}") cfg.environment;
 
     envFlags = lib.concatLists (
       lib.mapAttrsToList (name: value: ["--setenv" name (toString value)]) cfg.environment
@@ -73,6 +79,103 @@ in rec {
     prismaEngines = pkgs.prisma-engines_6;
     queryEnginePath = "${prismaEngines}/bin/query-engine";
     schemaEnginePath = "${prismaEngines}/bin/schema-engine";
+
+    litellmCommand =
+      [
+        "${cfg.package}/bin/litellm"
+        "--config"
+        "/etc/litellm/config.json"
+        "--host"
+        cfg.host
+        "--port"
+        (toString cfg.port)
+      ]
+      ++ cfg.extraFlags;
+
+    command =
+      if cfg.environmentFile == null
+      then litellmCommand
+      else [
+        "${pkgs.bashNonInteractive}/bin/bash"
+        "-c"
+        ''
+          set -a
+          . /etc/litellm/env
+          set +a
+          exec ${pkgs.coreutils}/bin/env ${lib.escapeShellArgs environmentAssignments} ${lib.escapeShellArgs litellmCommand}
+        ''
+      ];
+
+    bwrapArgs =
+      [
+        "--unshare-all"
+        "--share-net"
+        "--die-with-parent"
+        "--new-session"
+        "--proc"
+        "/proc"
+        "--dev"
+        "/dev"
+        "--tmpfs"
+        "/tmp"
+        "--ro-bind"
+        "/nix/store"
+        "/nix/store"
+        "--ro-bind"
+        "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+        "/etc/ssl/certs/ca-certificates.crt"
+        "--ro-bind-try"
+        "/etc/resolv.conf"
+        "/etc/resolv.conf"
+        "--ro-bind-try"
+        "/etc/hosts"
+        "/etc/hosts"
+        "--ro-bind-try"
+        "/etc/nsswitch.conf"
+        "/etc/nsswitch.conf"
+        "--ro-bind-try"
+        "/etc/os-release"
+        "/etc/os-release"
+        "--ro-bind"
+        "${configFile}"
+        "/etc/litellm/config.json"
+        "--clearenv"
+        "--setenv"
+        "PATH"
+        "${cfg.package}/bin:${prismaEngines}/bin:${pkgs.prisma_6}/bin:${pkgs.coreutils}/bin:${lib.getBin pkgs.openssl}/bin"
+        "--setenv"
+        "HOME"
+        "/tmp/litellm-state"
+        "--setenv"
+        "SSL_CERT_FILE"
+        "/etc/ssl/certs/ca-certificates.crt"
+        "--setenv"
+        "REQUESTS_CA_BUNDLE"
+        "/etc/ssl/certs/ca-certificates.crt"
+        "--setenv"
+        "CURL_CA_BUNDLE"
+        "/etc/ssl/certs/ca-certificates.crt"
+        "--setenv"
+        "PYTHONUNBUFFERED"
+        "1"
+        "--setenv"
+        "PRISMA_OFFLINE_MODE"
+        "true"
+        "--setenv"
+        "PRISMA_CLI_PATH"
+        "${pkgs.prisma_6}/bin/prisma"
+        "--setenv"
+        "PYTHONPATH"
+        "${prismaOverlay}/${pkgs.python3.sitePackages}:${prismaOverlay.pythonPath}"
+        "--setenv"
+        "PRISMA_QUERY_ENGINE_BINARY"
+        queryEnginePath
+        "--setenv"
+        "PRISMA_SCHEMA_ENGINE_BINARY"
+        schemaEnginePath
+      ]
+      ++ envFileBindFlags
+      ++ envFlags;
   in
     pkgs.writeShellScriptBin "litellm-sandboxed" ''
       set -euo pipefail
@@ -80,48 +183,9 @@ in rec {
       LITELLM_STATE_DIR="${stateDir}"
       mkdir -p "$LITELLM_STATE_DIR"
 
-      ${lib.optionalString (cfg.environmentFile != null) ''
-        if [ -f "/etc/litellm/env" ]; then
-          set -o allexport
-          source "/etc/litellm/env"
-          set +o allexport
-        fi
-      ''}
-
-      exec ${pkgs.bubblewrap}/bin/bwrap \
-        --unshare-all \
-        --share-net \
-        --die-with-parent \
-        --new-session \
-        --proc /proc \
-        --dev /dev \
-        --tmpfs /tmp \
-        --ro-bind /nix/store /nix/store \
-        --ro-bind "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" /etc/ssl/certs/ca-certificates.crt \
-        --ro-bind /etc/resolv.conf /etc/resolv.conf \
-        --ro-bind-try /etc/hosts /etc/hosts \
-        --ro-bind-try /etc/nsswitch.conf /etc/nsswitch.conf \
-        --ro-bind-try /etc/os-release /etc/os-release \
-        --ro-bind "${configFile}" /etc/litellm/config.json \
-        ${lib.concatStringsSep " " envFileBindFlags} \
+      exec ${pkgs.bubblewrap}/bin/bwrap ${lib.escapeShellArgs bwrapArgs} \
         --bind "$LITELLM_STATE_DIR" /tmp/litellm-state \
         --chdir /tmp/litellm-state \
-        --clearenv \
-        --setenv PATH "${cfg.package}/bin:${prismaEngines}/bin:${pkgs.prisma_6}/bin:${pkgs.coreutils}/bin:${lib.getBin pkgs.openssl}/bin" \
-        --setenv HOME /tmp/litellm-state \
-        --setenv SSL_CERT_FILE /etc/ssl/certs/ca-certificates.crt \
-        --setenv REQUESTS_CA_BUNDLE /etc/ssl/certs/ca-certificates.crt \
-        --setenv CURL_CA_BUNDLE /etc/ssl/certs/ca-certificates.crt \
-        --setenv PYTHONUNBUFFERED 1 \
-        --setenv PRISMA_OFFLINE_MODE true \
-        --setenv PRISMA_CLI_PATH "${pkgs.prisma_6}/bin/prisma" \
-        --setenv PYTHONPATH "${prismaOverlay}/${pkgs.python3.sitePackages}:${prismaOverlay.pythonPath}" \
-        --setenv PRISMA_QUERY_ENGINE_BINARY "${queryEnginePath}" \
-        --setenv PRISMA_SCHEMA_ENGINE_BINARY "${schemaEnginePath}" \
-        ${lib.concatStringsSep " " envFlags} \
-        ${cfg.package}/bin/litellm \
-          --config /etc/litellm/config.json \
-          --host ${cfg.host} \
-          --port ${toString cfg.port} ${lib.concatStringsSep " " cfg.extraFlags}
+        -- ${lib.escapeShellArgs command}
     '';
 }

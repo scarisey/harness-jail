@@ -15,20 +15,19 @@ fetch_sri() {
 # Check if update is needed
 if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
   tmpFile=$(mktemp)
+  trap 'rm -f "$tmpFile"' EXIT
 
   echo "Fetching hashes for all platforms..."
   SHA256_LINUX_X64=$(fetch_sri   "https://registry.npmjs.org/@github/copilot-linux-x64/-/copilot-linux-x64-${LATEST_VERSION}.tgz")
   SHA256_LINUX_ARM64=$(fetch_sri "https://registry.npmjs.org/@github/copilot-linux-arm64/-/copilot-linux-arm64-${LATEST_VERSION}.tgz")
-  SHA256_DARWIN_X64=$(fetch_sri  "https://registry.npmjs.org/@github/copilot-darwin-x64/-/copilot-darwin-x64-${LATEST_VERSION}.tgz")
   SHA256_DARWIN_ARM64=$(fetch_sri "https://registry.npmjs.org/@github/copilot-darwin-arm64/-/copilot-darwin-arm64-${LATEST_VERSION}.tgz")
 
   jq \
     --arg v   "$LATEST_VERSION" \
     --arg lx  "$SHA256_LINUX_X64" \
     --arg la  "$SHA256_LINUX_ARM64" \
-    --arg dx  "$SHA256_DARWIN_X64" \
     --arg da  "$SHA256_DARWIN_ARM64" \
-    '.version=$v | .sha256Linux_x64=$lx | .sha256Linux_arm64=$la | .sha256Darwin_x64=$dx | .sha256Darwin_arm64=$da' \
+    '.version=$v | .sha256Linux_x64=$lx | .sha256Linux_arm64=$la | .sha256Darwin_arm64=$da' \
     versions.json > "$tmpFile"
   cp "$tmpFile" versions.json
   rm -f "$tmpFile"

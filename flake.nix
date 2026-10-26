@@ -1,7 +1,7 @@
 {
   description = ''
     Harness jail modules. For NixOS / Home manager / Devenv.
-    Opiniated way to run a harness on Nix, with utilities.
+    Opinionated way to run a harness on Nix, with utilities.
   '';
 
   inputs = {
@@ -18,7 +18,7 @@
     home-manager,
     ...
   }: let
-    supportedSystems = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
+    supportedSystems = ["x86_64-linux" "aarch64-linux" "aarch64-darwin"];
     forAllSystems = f:
       nixpkgs.lib.genAttrs supportedSystems (system:
         f {
@@ -29,8 +29,10 @@
     devShells = forAllSystems ({pkgs, ...}: {
       updateShell = pkgs.mkShell {
         packages = [
-          pkgs.nodejs_latest
+          pkgs.curl
           pkgs.jq
+          pkgs.nix
+          pkgs.nodejs_latest
         ];
         shellHook = ''
           echo "Launch update commands here."
@@ -61,17 +63,24 @@
       headroom = self.packages.${final.stdenv.hostPlatform.system}.headroom;
     };
 
-    nixosModules.harness-jail = ./modules/harness/nixos.nix;
-    nixosModules.headroom = ./modules/headroom/nixos.nix;
-    nixosModules.litellm = ./modules/litellm/nixos.nix;
+    nixosModules = {
+      harness-jail = ./modules/harness/nixos.nix;
+      headroom = ./modules/headroom/nixos.nix;
+      litellm = ./modules/litellm/nixos.nix;
+    };
 
-    homeManagerModules.harness-jail = ./modules/harness/home-manager.nix;
-    homeManagerModules.headroom = ./modules/headroom/home-manager.nix;
-    homeManagerModules.litellm = ./modules/litellm/home-manager.nix;
+    homeManagerModules = {
+      harness-jail = ./modules/harness/home-manager.nix;
+      headroom = ./modules/headroom/home-manager.nix;
+      litellm = ./modules/litellm/home-manager.nix;
+    };
 
-    devenvModules.harness-jail = ./modules/harness/devenv.nix;
-    devenvModules.headroom = ./modules/headroom/devenv.nix;
-    devenvModules.litellm = ./modules/litellm/devenv.nix;
+    devenvModules = {
+      harness-jail = ./modules/harness/devenv.nix;
+      headroom = ./modules/headroom/devenv.nix;
+      litellm = ./modules/litellm/devenv.nix;
+    };
+
     formatter = forAllSystems ({pkgs, ...}: pkgs.alejandra);
   };
 }

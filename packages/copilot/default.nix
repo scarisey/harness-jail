@@ -6,7 +6,7 @@
 }: let
   versions = builtins.fromJSON (builtins.readFile ./versions.json);
   pname = "github-copilot-cli";
-  version = versions.version;
+  inherit (versions) version;
 
   platformMap = {
     "x86_64-linux" = {
@@ -16,10 +16,6 @@
     "aarch64-linux" = {
       pkgName = "copilot-linux-arm64";
       sha256 = versions.sha256Linux_arm64;
-    };
-    "x86_64-darwin" = {
-      pkgName = "copilot-darwin-x64";
-      sha256 = versions.sha256Darwin_x64;
     };
     "aarch64-darwin" = {
       pkgName = "copilot-darwin-arm64";
@@ -34,7 +30,7 @@ in
 
     src = fetchurl {
       url = "https://registry.npmjs.org/@github/${platform.pkgName}/-/${platform.pkgName}-${version}.tgz";
-      sha256 = platform.sha256;
+      inherit (platform) sha256;
     };
 
     nativeBuildInputs = lib.optionals stdenv.hostPlatform.isLinux [autoPatchelfHook];
@@ -45,16 +41,25 @@ in
 
     installPhase = ''
       runHook preInstall
-      mkdir -p $out/bin
+      mkdir -p $out/bin $out/share/licenses/${pname}
       cp copilot $out/bin/copilot
+      cp LICENSE.md $out/share/licenses/${pname}/LICENSE.md
       chmod +x $out/bin/copilot
       runHook postInstall
     '';
 
     meta = {
-      description = "Github Copilot CLI";
-      homepage = "https://github.com";
+      description = "GitHub Copilot CLI";
+      homepage = "https://github.com/github/copilot-cli";
+      license = lib.licenses.unfreeRedistributable;
       mainProgram = "copilot";
-      platforms = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
+      maintainers = [
+        {
+          name = "Sylvain Carisey";
+          email = "sylvain@carisey.dev";
+          github = "scarisey";
+        }
+      ];
+      platforms = ["x86_64-linux" "aarch64-linux" "aarch64-darwin"];
     };
   }

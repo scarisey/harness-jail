@@ -1,4 +1,5 @@
 {
+  lib,
   symlinkJoin,
   litellm,
   python3,
@@ -65,6 +66,19 @@ in
   symlinkJoin {
     name = "litellm-prisma-${litellmBase.version}";
     paths = [litellmProxyExtras prismaWithClient];
+    meta = {
+      description = "LiteLLM with a pre-generated Prisma client for Nix";
+      homepage = "https://github.com/BerriAI/litellm";
+      license = lib.licenses.mit;
+      maintainers = [
+        {
+          name = "Sylvain Carisey";
+          email = "sylvain@carisey.dev";
+          github = "scarisey";
+        }
+      ];
+      platforms = ["x86_64-linux" "aarch64-linux" "aarch64-darwin"];
+    };
     passthru = {
       inherit litellmProxyExtras prismaWithClient;
       # Subprocesses (prisma CLI) run a bare interpreter, so they need the whole closure on PYTHONPATH.

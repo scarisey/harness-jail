@@ -4,8 +4,7 @@
   fetchurl,
   python3,
   ast-grep,
-}:
-let
+}: let
   versions = builtins.fromJSON (builtins.readFile ./headroom-versions.json);
   platformMap = {
     "x86_64-linux" = {
@@ -15,10 +14,6 @@ let
     "aarch64-linux" = {
       url = versions.urlLinux_arm64;
       hash = versions.sha256Linux_arm64;
-    };
-    "x86_64-darwin" = {
-      url = versions.urlDarwin_x64;
-      hash = versions.sha256Darwin_x64;
     };
     "aarch64-darwin" = {
       url = versions.urlDarwin_arm64;
@@ -52,45 +47,52 @@ let
     sqlite-vec
   ];
 in
-python3.pkgs.buildPythonApplication {
-  pname = "headroom-ai";
-  inherit (versions) version;
-  format = "wheel";
+  python3.pkgs.buildPythonApplication {
+    pname = "headroom-ai";
+    inherit (versions) version;
+    format = "wheel";
 
-  src = fetchurl {
-    inherit (platform) url hash;
-  };
+    src = fetchurl {
+      inherit (platform) url hash;
+    };
 
-  # ast-grep-cli only provides a binary, not an importable Python module.
-  dontCheckRuntimeDeps = true;
+    # ast-grep-cli only provides a binary, not an importable Python module.
+    dontCheckRuntimeDeps = true;
 
-  inherit propagatedBuildInputs;
+    inherit propagatedBuildInputs;
 
-  # `headroom wrap` spawns `python -m headroom.cli` in a subprocess, which
-  # needs its own PYTHONPATH in addition to the entry point's site.addsitedir.
-  makeWrapperArgs = [
-    "--prefix"
-    "PATH"
-    ":"
-    "${lib.makeBinPath [ ast-grep ]}"
-    "--prefix"
-    "PYTHONPATH"
-    ":"
-    "$out/${python3.sitePackages}:${python3.pkgs.makePythonPath propagatedBuildInputs}"
-  ];
-
-  pythonImportsCheck = [ "headroom" ];
-
-  meta = {
-    description = "Compresses tool outputs and LLM context through a local proxy";
-    homepage = "https://github.com/headroomlabs-ai/headroom";
-    changelog = "https://github.com/headroomlabs-ai/headroom/blob/main/CHANGELOG.md";
-    license = lib.licenses.asl20;
-    mainProgram = "headroom";
-    platforms = [
-      "x86_64-linux"
-      "aarch64-linux"
-      "aarch64-darwin"
+    # `headroom wrap` spawns `python -m headroom.cli` in a subprocess, which
+    # needs its own PYTHONPATH in addition to the entry point's site.addsitedir.
+    makeWrapperArgs = [
+      "--prefix"
+      "PATH"
+      ":"
+      "${lib.makeBinPath [ast-grep]}"
+      "--prefix"
+      "PYTHONPATH"
+      ":"
+      "$out/${python3.sitePackages}:${python3.pkgs.makePythonPath propagatedBuildInputs}"
     ];
-  };
-}
+
+    pythonImportsCheck = ["headroom"];
+
+    meta = {
+      description = "Compresses tool outputs and LLM context through a local proxy";
+      homepage = "https://github.com/headroomlabs-ai/headroom";
+      changelog = "https://github.com/headroomlabs-ai/headroom/blob/main/CHANGELOG.md";
+      license = lib.licenses.asl20;
+      mainProgram = "headroom";
+      maintainers = [
+        {
+          name = "Sylvain Carisey";
+          email = "sylvain@carisey.dev";
+          github = "scarisey";
+        }
+      ];
+      platforms = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "aarch64-darwin"
+      ];
+    };
+  }

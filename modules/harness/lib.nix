@@ -19,9 +19,9 @@ with lib; let
       };
 
       wrapperName = mkOption {
-        type = types.str;
+        type = types.strMatching "[A-Za-z0-9._-]+";
         default = "harness";
-        description = "How to call the wrapper.";
+        description = "Name of the wrapper command installed on PATH.";
       };
 
       package = lib.mkOption {
@@ -32,14 +32,14 @@ with lib; let
 
       command = lib.mkOption {
         type = lib.types.str;
-        description = "CLI executable name. Defaults to the package's main program.";
+        description = "Executable name or path to run inside the sandbox.";
         example = "opencode";
       };
 
       extraPackages = mkOption {
         type = types.listOf types.package;
         default = with pkgs; [bashNonInteractive coreutils gnugrep gnused gawk findutils diffutils gnutar gzip which git curl ripgrep];
-        defaultText = literalExpression "[ bash coreutils gnugrep gnused gawk findutils diffutils gnutar gzip which git curl ripgrep ]";
+        defaultText = literalExpression "[ bashNonInteractive coreutils gnugrep gnused gawk findutils diffutils gnutar gzip which git curl ripgrep ]";
         description = ''
           Tools made available on PATH inside the sandbox (from the read-only Nix store).
           /bin/sh and /usr/bin/env are provided as symlinks to Nix store binaries.
@@ -50,7 +50,7 @@ with lib; let
       args = mkOption {
         type = types.listOf types.str;
         default = [];
-        description = "Arguments passed to exectuable.";
+        description = "Arguments passed to the executable.";
       };
 
       enableNetwork = mkOption {
@@ -62,36 +62,36 @@ with lib; let
       readOnlyPaths = mkOption {
         type = types.listOf types.path;
         default = [];
-        description = "Paths that would be read by harness.";
+        description = "Host paths mounted read-only at the same path inside the sandbox.";
       };
 
       readWritePaths = mkOption {
         type = types.listOf types.path;
         default = [];
-        description = "Paths that would be read/written by harness.";
+        description = "Host paths mounted read-write at the same path inside the sandbox.";
       };
 
       clearEnv = mkOption {
         type = types.bool;
         default = true;
-        description = "Don't heritate from host environment variables.";
+        description = "Discard the host environment before starting the sandbox.";
       };
 
       environment = mkOption {
         type = types.attrsOf types.str;
         default = {};
-        description = "Specific environment variables. With clearEnv enabled, HOME defaults to /tmp unless overridden here.";
+        description = "Environment variables set inside the sandbox. With clearEnv enabled, HOME defaults to homeDir unless overridden here.";
       };
 
       environmentFile = mkOption {
         type = types.nullOr types.str;
         default = null;
-        description = "Shell-compatible file of environment variables to load for the sandboxed executable.";
+        description = "Shell-compatible file of environment variables loaded by the wrapper and passed into the sandbox.";
       };
 
       homeDir = mkOption {
         type = types.path;
-        description = "Path to a dedicated home directory for harness.";
+        description = "Dedicated persistent home directory for the sandboxed executable.";
       };
     };
   };
@@ -99,10 +99,13 @@ with lib; let
   # f : { cfg, bwrapCommand } -> nixConfig
   mkConfig = config: f: let
     cfg = config.services.harness-jail;
-    readWritePathsFinal = map (p: builtins.toString p) (cfg.readWritePaths ++ [cfg.homeDir] ++ lib.optional (builtins.hasAttr "devenv" config) config.devenv.root);
+    readOnlyPathsFinal = lib.unique (map (p: builtins.toString p) cfg.readOnlyPaths);
+    readWritePathsFinal = lib.unique (map (p: builtins.toString p) (
+      cfg.readWritePaths ++ [cfg.homeDir] ++ lib.optional (builtins.hasAttr "devenv" config) config.devenv.root
+    ));
     packageFinal = pkgs.writeShellScriptBin cfg.wrapperName ''
       export PATH="${lib.makeBinPath ([cfg.package] ++ cfg.extraPackages)}''${PATH:+:$PATH}"
-      exec "${lib.escapeShellArg cfg.command}" "$@"
+      exec ${lib.escapeShellArg cfg.command} "$@"
     '';
 
     bwrapPrefixArgs =
@@ -116,11 +119,20 @@ with lib; let
         "--tmpfs"
         "/tmp"
         "--ro-bind"
-        "/nix"
-        "/nix"
-        "--ro-bind"
+        "/nix/store"
+        "/nix/store"
+        "--ro-bind-try"
         "/etc/resolv.conf"
         "/etc/resolv.conf"
+        "--ro-bind-try"
+        "/etc/hosts"
+        "/etc/hosts"
+        "--ro-bind-try"
+        "/etc/nsswitch.conf"
+        "/etc/nsswitch.conf"
+        "--ro-bind-try"
+        "/etc/os-release"
+        "/etc/os-release"
         "--ro-bind"
         "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
         "/etc/ssl/certs/ca-certificates.crt"
@@ -143,7 +155,7 @@ with lib; let
       // cfg.environment;
     environmentArgs = concatLists (mapAttrsToList (name: value: ["--setenv" name value]) environment);
     bwrapSuffixArgs =
-      concatLists (map (path: ["--ro-bind" path path]) cfg.readOnlyPaths)
+      concatLists (map (path: ["--ro-bind" path path]) readOnlyPathsFinal)
       ++ concatLists (map (path: ["--bind" path path]) readWritePathsFinal)
       ++ optional cfg.enableNetwork "--share-net";
 
@@ -157,35 +169,34 @@ with lib; let
     bwrapCommand =
       if cfg.environmentFile == null
       then "${pkgs.bubblewrap}/bin/bwrap ${escapeShellArgs bwrapArgs}"
+      else if !cfg.clearEnv
+      then "${pkgs.writeShellScript "bwrap-harness" ''
+        set -eo pipefail
+        set -a
+        . ${escapeShellArg cfg.environmentFile}
+        set +a
+        exec ${pkgs.bubblewrap}/bin/bwrap ${escapeShellArgs bwrapArgs} "$@"
+      ''}"
       else let
-        bwrapWrapper = pkgs.writeShellScript "bwrap-harness" ''
+        innerScript = pkgs.writeShellScript "bwrap-harness-inner" ''
           set -eo pipefail
-          ${optionalString cfg.clearEnv ''
-            exec ${pkgs.coreutils}/bin/env -i ${pkgs.bash}/bin/bash --noprofile --norc -c '
-              set -eo pipefail
-              set -a
-              . "$1"
-              shift
-              set +a
-              unset PWD SHLVL _
-              bwrap_args=(${escapeShellArgs bwrapPrefixArgs})
-              while IFS= read -r -d "" entry; do
-                bwrap_args+=(--setenv "''${entry%%=*}" "''${entry#*=}")
-              done < <(${pkgs.coreutils}/bin/env -0)
-              bwrap_args+=(${escapeShellArgs environmentArgs})
-              bwrap_args+=(${escapeShellArgs bwrapSuffixArgs})
-              bwrap_args+=(-- ${escapeShellArgs ([wrappedCommand] ++ cfg.args)} "$@")
-              exec ${pkgs.bubblewrap}/bin/bwrap "''${bwrap_args[@]}"
-            ' bwrap-harness ${escapeShellArg cfg.environmentFile} "$@"
-          ''}
-          ${optionalString (!cfg.clearEnv) ''
-            set -a
-            . ${escapeShellArg cfg.environmentFile}
-            set +a
-            exec ${pkgs.bubblewrap}/bin/bwrap ${escapeShellArgs bwrapArgs} "$@"
-          ''}
+          set -a
+          . "$1"
+          shift
+          set +a
+          unset PWD SHLVL _
+          bwrap_args=(${escapeShellArgs bwrapPrefixArgs})
+          while IFS= read -r -d "" entry; do
+            bwrap_args+=(--setenv "''${entry%%=*}" "''${entry#*=}")
+          done < <(${pkgs.coreutils}/bin/env -0)
+          bwrap_args+=(${escapeShellArgs environmentArgs})
+          bwrap_args+=(${escapeShellArgs bwrapSuffixArgs})
+          bwrap_args+=(-- ${escapeShellArgs ([wrappedCommand] ++ cfg.args)} "$@")
+          exec ${pkgs.bubblewrap}/bin/bwrap "''${bwrap_args[@]}"
         '';
-      in "${bwrapWrapper}";
+      in "${pkgs.writeShellScript "bwrap-harness" ''
+        exec ${pkgs.coreutils}/bin/env -i ${pkgs.bash}/bin/bash --noprofile --norc ${innerScript} ${escapeShellArg cfg.environmentFile} "$@"
+      ''}";
   in
     mkIf cfg.enable (f {inherit cfg bwrapCommand;});
 in {

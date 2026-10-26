@@ -3,5 +3,6 @@ result
 result-*
 .direnv
 .devenv
+.home/*
+!.home/.gitkeep
 .secrets/
-home/

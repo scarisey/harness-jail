@@ -20,8 +20,8 @@
       "COPILOT_GITHUB_TOKEN"
     ];
     clearEnv = true;
-    environmentFile = "./.secrets/harness-flake/default/environment_file";
+    environmentFile = "${toString ./.}/.secrets/harness-flake/default/environment_file";
     readWritePaths = [../../.];
-    homeDir = "/tmp";
+    homeDir = ./.home;
   };
 }

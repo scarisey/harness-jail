@@ -113,11 +113,11 @@ in rec {
     ];
 
     readOnlyBindFlags = lib.concatLists (
-      map (path: ["--ro-bind" (toString path) (toString path)]) cfg.readOnlyPaths
+      map (path: ["--ro-bind" path path]) (lib.unique (map toString cfg.readOnlyPaths))
     );
 
     readWriteBindFlags = lib.concatLists (
-      map (path: ["--bind" (toString path) (toString path)]) cfg.readWritePaths
+      map (path: ["--bind" path path]) (lib.unique (map toString cfg.readWritePaths))
     );
 
     bwrapArgs =
@@ -138,7 +138,7 @@ in rec {
         "--ro-bind"
         "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
         "/etc/ssl/certs/ca-certificates.crt"
-        "--ro-bind"
+        "--ro-bind-try"
         "/etc/resolv.conf"
         "/etc/resolv.conf"
         "--ro-bind-try"
