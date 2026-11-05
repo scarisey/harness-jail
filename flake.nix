@@ -52,10 +52,10 @@
       nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         nixos-harness-one-shot = pkgs.callPackage ./example/nixos-harness-one-shot {inherit self;};
         nixos-headroom = pkgs.callPackage ./example/nixos-headroom {inherit self;};
-        nixos-opencode-litellm = pkgs.callPackage ./example/nixos-opencode-litellm {inherit self;};
-        home-manager-opencode-litellm = pkgs.callPackage ./example/home-manager-opencode-litellm {
-          inherit self home-manager;
-        };
+                    #        nixos-opencode-litellm = pkgs.callPackage ./example/nixos-opencode-litellm {inherit self;};
+                    #        home-manager-opencode-litellm = pkgs.callPackage ./example/home-manager-opencode-litellm {
+                    #          inherit self home-manager;
+                    #        };
       });
 
     overlays.default = final: prev: {
@@ -82,5 +82,15 @@
     };
 
     formatter = forAllSystems ({pkgs, ...}: pkgs.alejandra);
+  };
+  nixConfig = {
+    extra-substituters = [
+      "https://nix-community.cachix.org?priority=31"
+      "https://scarisey-public.cachix.org?priority=32"
+    ];
+    extra-trusted-public-keys = [
+      "scarisey-public.cachix.org-1:kabqlCM0Wwd3iOh+C62WQg7vUO7vX3JbKKraSmxr2n8="
+      "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
+    ];
   };
 }
