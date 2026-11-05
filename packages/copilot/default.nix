@@ -1,7 +1,8 @@
 {
   stdenv,
   fetchurl,
-  autoPatchelfHook,
+  patchelf,
+  makeWrapper,
   lib,
 }: let
   versions = builtins.fromJSON (builtins.readFile ./versions.json);
@@ -24,6 +25,7 @@
   };
 
   platform = platformMap.${stdenv.hostPlatform.system};
+  isLinux = stdenv.hostPlatform.isLinux;
 in
   stdenv.mkDerivation rec {
     inherit pname version;
@@ -33,18 +35,34 @@ in
       inherit (platform) sha256;
     };
 
-    nativeBuildInputs = lib.optionals stdenv.hostPlatform.isLinux [autoPatchelfHook];
-    buildInputs = lib.optionals stdenv.hostPlatform.isLinux [stdenv.cc.cc.lib];
+    dontAutoPatchelf = true;
+
+    nativeBuildInputs = lib.optionals isLinux [patchelf makeWrapper];
+    buildInputs = lib.optionals isLinux [stdenv.cc.cc.lib];
 
     dontBuild = true;
     dontStrip = true;
 
     installPhase = ''
       runHook preInstall
-      mkdir -p $out/bin $out/share/licenses/${pname}
-      cp copilot $out/bin/copilot
-      cp LICENSE.md $out/share/licenses/${pname}/LICENSE.md
-      chmod +x $out/bin/copilot
+      mkdir -p $out/bin
+
+      ${lib.optionalString isLinux ''
+        mkdir -p $out/libexec
+        install -m755 copilot $out/libexec/copilot
+
+        # Only set the interpreter: adding an RPATH breaks the SEA layout (see
+        # the comment above dontAutoPatchelf).
+        patchelf --set-interpreter ${stdenv.cc.bintools.dynamicLinker} $out/libexec/copilot
+
+        makeWrapper $out/libexec/copilot $out/bin/copilot \
+          --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [stdenv.cc.cc.lib]}
+      ''}
+
+      ${lib.optionalString (!isLinux) ''
+        install -m755 copilot $out/bin/copilot
+      ''}
+
       runHook postInstall
     '';
 

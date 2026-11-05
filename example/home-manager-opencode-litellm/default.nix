@@ -4,7 +4,7 @@
   pkgs,
   ...
 }:
-pkgs.testers.nixosTest {
+(pkgs.extend self.overlays.default).testers.nixosTest {
   name = "home-manager-opencode-litellm";
 
   nodes.machine = {
@@ -50,7 +50,6 @@ pkgs.testers.nixosTest {
             enableNetwork = true;
             args = ["serve"];
             clearEnv = true;
-            homeDir = "/home/test";
           };
 
           litellm = {
@@ -97,6 +96,9 @@ pkgs.testers.nixosTest {
     machine.wait_for_unit("litellm.service", user="test")
     machine.wait_for_open_port(4000)
     machine.succeed("curl -fsS http://127.0.0.1:4000/health/liveliness")
+    machine.succeed("sudo -u postgres psql -d litellm -tAc \"SELECT count(*) FROM _prisma_migrations\"")
+    machine.succeed("test -d /home/test/.local/share/litellm/ui")
+    machine.succeed("su - test -c 'litellm --version'")
     machine.succeed("su - test -c 'harness --version'")
   '';
 }

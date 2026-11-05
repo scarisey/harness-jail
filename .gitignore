@@ -1,5 +1,5 @@
 .devenv/
-./result
 result
 result-*
 .direnv
+.secrets/

@@ -17,8 +17,5 @@
     args = ["--standalone"];
     clearEnv = true;
     homeDir = ./.home;
-    readWritePaths = [
-      ../../.
-    ];
   };
 }

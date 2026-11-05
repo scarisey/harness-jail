@@ -6,6 +6,7 @@
 }: {
   overlays = [
     inputs.opencode.overlays.default
+    inputs.harness-flake.overlays.default
   ];
   packages = with pkgs; [
     opencode
@@ -18,9 +19,6 @@
       enableNetwork = true;
       args = ["serve"];
       clearEnv = true;
-      readWritePaths = [
-        ../../.
-      ];
       homeDir = ./.home;
     };
 

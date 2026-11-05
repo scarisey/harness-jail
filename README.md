@@ -28,7 +28,7 @@ jail with only the files, environment, and network access you allow.
 | `harness-jail` module | Wraps any CLI in a Bubblewrap sandbox. Installs a `harness` command and optionally runs the sandboxed command as a systemd service. |
 | `headroom` module | Runs the [Headroom](https://github.com/headroomlabs-ai/headroom) context-optimization proxy, sandboxed, as a service. |
 | `litellm` module | Runs the [LiteLLM](https://github.com/BerriAI/litellm) proxy with a Nix-configured JSON config, sandboxed, as a service. |
-| Packages | `copilot` (GitHub Copilot CLI), `headroom`, and `litellm-prisma`. |
+| Packages | `copilot` (GitHub Copilot CLI), `headroom`, and `litellm`. |
 
 By default the sandbox:
 
@@ -47,8 +47,9 @@ Network access and extra host paths are opt-in.
 - NixOS, Home Manager, or devenv, depending on which module you use.
 - Bubblewrap itself is added automatically; you do not need to install it.
 
-Package outputs are declared for Linux and Apple Silicon macOS, but only Linux
-is tested and the sandbox modules are intended for Linux.
+Copilot and Headroom are declared for Linux and Apple Silicon macOS, but only
+Linux is tested. LiteLLM is Linux-only, and the sandbox modules are intended
+for Linux.
 
 ## Quick start
 
@@ -65,8 +66,8 @@ is tested and the sandbox modules are intended for Linux.
 
 ### 2. NixOS
 
-Import the module and enable the overlay if you want `pkgs.copilot` or
-`pkgs.headroom`:
+Import the module and enable the overlay if you want `pkgs.copilot`,
+`pkgs.headroom`, or `pkgs.litellm`:
 
 ```nix
 {
@@ -102,6 +103,8 @@ wrapper, set `daemon = false`.
 {
   home-manager.users.me = { pkgs, ... }: {
     imports = [ harness-jail.homeManagerModules.harness-jail ];
+
+    nixpkgs.overlays = [ harness-jail.overlays.default ];
 
     services.harness-jail = {
       enable = true;
@@ -152,9 +155,10 @@ Import the module and configure it in `devenv.nix`:
 }
 ```
 
-Create `.home` before entering the shell. In devenv, `homeDir` has no default and
-must be set explicitly. The project root is mounted read-write automatically, so
-agents can edit the current project.
+Create `.home` before entering the shell. In devenv, `homeDir` falls back to a
+per-user state directory when unset, but an explicit project-local directory is
+recommended. The project root is mounted read-write automatically, so agents can
+edit the current project.
 
 Run the wrapper with:
 
@@ -192,9 +196,10 @@ state stored there persists between runs.
 
 | Platform | Default `homeDir` |
 | --- | --- |
-| NixOS | `/var/lib/harness-jail` |
+| NixOS wrapper | `~/.local/state/harness-jail` (per invoking user) |
+| NixOS daemon | `/var/lib/harness-jail` |
 | Home Manager | `~/.local/state/harness-jail` |
-| devenv | Required — no default |
+| devenv | `~/.local/state/harness-jail` if unset, but setting an explicit project-local directory is recommended |
 
 Apart from the sandbox plumbing (`/nix/store`, `/dev`, `/proc`, `/tmp`, and the
 resolver and CA files), only `homeDir`, `readOnlyPaths`, and `readWritePaths` are
@@ -215,17 +220,27 @@ these variables reach the sandbox:
 
 - `HOME`, set to `homeDir`;
 - `PATH`, built from `extraPackages` and the wrapped package;
-- `SSL_CERT_FILE`, set to the Nix CA bundle;
-- values from `environment`;
-- variables loaded from `environmentFile`.
+- `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, and `CURL_CA_BUNDLE`, set to the Nix CA
+  bundle;
+- values from `environmentFile`;
+- values from `environment`.
+
+Built-in defaults are applied first, then `environmentFile`, then explicit
+`environment` values. This means an env file can override `HOME`, the CA
+variables, and the base `PATH`, while explicit `environment` values still take
+precedence over both. The wrapper always prepends the wrapped package and
+`extraPackages` to `PATH`, so the command and its tools remain runnable.
 
 Set `clearEnv = false` to inherit the host environment. In that case there is no
 default `HOME` override.
 
 `environmentFile` points to a shell-compatible file that is read at runtime and
-is not copied into the Nix store. Explicit values in `environment` take
-precedence over the file. The file must be readable by the user or service that
-runs the harness.
+is not copied into the Nix store. The file is sourced outside the sandbox and
+then masked at its original path inside the sandbox, so the sandboxed process
+cannot read it even when it lives under `homeDir`, `readWritePaths`, or the
+devenv root. The file must be readable by the user or service that runs the
+harness. A symlink or duplicate copy under another mounted path is still
+readable; store secrets outside mounted paths when possible.
 
 ### Network and certificates
 
@@ -270,8 +285,8 @@ Available as `nixosModules.harness-jail`, `homeManagerModules.harness-jail`, and
 | `readWritePaths` | list of path | `[]` | Host paths mounted read-write at the same path. |
 | `clearEnv` | bool | `true` | Discard the host environment. |
 | `environment` | attrs of string | `{}` | Environment variables set in the sandbox. |
-| `environmentFile` | string or null | `null` | Runtime env file sourced by the wrapper. |
-| `homeDir` | path | platform-specific | Persistent home directory for the sandbox. |
+| `environmentFile` | string or null | `null` | Runtime env file sourced by the wrapper and masked inside the sandbox. |
+| `homeDir` | path or null | platform-specific | Persistent home directory. `null` uses a per-user runtime state directory. |
 
 ### `services.headroom`
 
@@ -310,7 +325,7 @@ Available as `nixosModules.litellm`, `homeManagerModules.litellm`, and
 
 | Module | NixOS state | Home Manager state | devenv state |
 | --- | --- | --- | --- |
-| `harness-jail` | `/var/lib/harness-jail` | `~/.local/state/harness-jail` | `homeDir` (required) |
+| `harness-jail` | `/var/lib/harness-jail` (daemon) | `~/.local/state/harness-jail` | `homeDir` or per-user default |
 | `headroom` | `/var/lib/headroom` | `~/.local/share/headroom` | `$DEVENV_STATE/headroom` |
 | `litellm` | `/var/lib/litellm` | `~/.local/share/litellm` | `$DEVENV_STATE/litellm` |
 
@@ -344,10 +359,11 @@ The `headroom` CLI is installed alongside the service. The proxy always shares
 the host network namespace and always clears its environment. Pass provider
 credentials and other settings with `environment` or `environmentFile`.
 
-`environmentFile` is bind-mounted read-only at `/etc/headroom/env` and sourced
-inside the sandbox. Values in `environment` take precedence over the file. Use a
-string path such as `/run/secrets/headroom.env`; the value is not copied into the
-Nix store. Add extra host paths with `readOnlyPaths` and `readWritePaths`; extra
+`environmentFile` is bind-mounted read-only at `/etc/headroom/env`, sourced
+inside the sandbox, and masked at its original host path. Values in `environment`
+take precedence over the file. Use a string path such as
+`/run/secrets/headroom.env`; the value is not copied into the Nix store. Add
+extra host paths with `readOnlyPaths` and `readWritePaths`; extra
 `headroom proxy` arguments go in `extraFlags`.
 
 ## LiteLLM proxy
@@ -390,13 +406,24 @@ Liveness is exposed at `/health/liveliness`.
 Values in `environment` become part of the Nix store. The example above uses
 placeholders; do not commit real credentials to a Nix file. Use
 `environmentFile` for secrets: it is bind-mounted read-only at
-`/etc/litellm/env` and sourced inside the sandbox at runtime. Explicit values in
-`environment` take precedence over the file.
+`/etc/litellm/env`, sourced inside the sandbox at runtime, and masked at its
+original host path inside the sandbox. Explicit values in `environment` take
+precedence over the file.
+
+The LiteLLM module defaults to the `SCARF_NO_ANALYTICS=True`,
+`DO_NOT_TRACK=True`, and `ANONYMIZED_TELEMETRY=False` environment variables.
+Override them in `environment` if needed.
 
 The LiteLLM sandbox always shares the host network namespace so it can reach
-model providers and databases. The service includes a Nix-compatible Prisma
-setup, so database-backed LiteLLM features work without downloading Prisma
-engines at runtime.
+model providers and databases. The default `services.litellm.package` is
+`pkgs.litellm` from this flake's overlay; import the overlay to get a
+full-server build with the proxy dependencies and a pre-generated Prisma client.
+Database-backed features then work without downloading Prisma engines or a Node
+toolchain at runtime. If the overlay is missing, nixpkgs' incomplete LiteLLM
+package is selected and the module emits a warning.
+
+The `litellm` CLI is installed alongside the service on NixOS, Home Manager, and
+devenv.
 
 > **NixOS:** nixpkgs also defines `services.litellm`. When importing this
 > flake's module, disable the upstream module first:
@@ -416,14 +443,15 @@ The flake exports:
 | --- | --- |
 | `packages.<system>.copilot` | GitHub Copilot CLI (`copilot`). |
 | `packages.<system>.headroom` | Headroom AI (`headroom`). |
-| `packages.<system>.litellm-prisma` | LiteLLM with a pre-generated Prisma client. |
-| `overlays.default` | Adds `pkgs.copilot` and `pkgs.headroom`. |
+| `packages.<system>.litellm` | LiteLLM proxy with the full server dependency set (Linux only). |
+| `overlays.default` | Adds `pkgs.copilot`, `pkgs.headroom`, and, on Linux, `pkgs.litellm`. |
 
 Build a package directly:
 
 ```sh
 NIXPKGS_ALLOW_UNFREE=1 nix build --impure .#copilot
 nix build .#headroom
+nix build .#litellm
 ```
 
 or use the overlay:
@@ -434,8 +462,11 @@ or use the overlay:
 }
 ```
 
-`overlays.default` does **not** add `litellm-prisma`; reference it from the flake
-outputs if you need it.
+The overlay is required for the full LiteLLM build. nixpkgs also provides a
+`litellm` package, but it does not include the proxy extras; importing the
+overlay overrides it with the full-server package used by the modules. On
+unsupported systems and on Darwin, the overlay only adds Copilot and Headroom.
+LiteLLM is Linux-only.
 
 `copilot` is unfree. Enable it with `nixpkgs.config.allowUnfree = true`, or set
 `NIXPKGS_ALLOW_UNFREE=1` when building it directly.
@@ -457,8 +488,10 @@ outputs if you need it.
 ```
 
 The file is read at runtime and is not copied into the Nix store. Use a runtime
-path such as `/run/secrets/copilot.env`. The file should contain shell-compatible
-assignments:
+path such as `/run/secrets/copilot.env`. The file is masked at its original path
+inside the sandbox, but it should still live outside `homeDir`, `readWritePaths`,
+and the devenv project root when possible. The file should contain
+shell-compatible assignments:
 
 ```sh
 export COPILOT_GITHUB_TOKEN="ghp_..."
@@ -528,13 +561,19 @@ The [`example/`](./example) directory contains complete, runnable setups:
 
 | Example | Demonstrates |
 | --- | --- |
-| [`devenv-copilot`](./example/devenv-copilot) | Copilot CLI with a secretspec env file and the project mounted read-write. |
+| [`devenv-copilot`](./example/devenv-copilot) | Copilot CLI with a secretspec env file stored outside the project root and the project mounted read-write. |
 | [`devenv-opencode-simple`](./example/devenv-opencode-simple) | Minimal opencode setup. |
 | [`devenv-opencode-litellm`](./example/devenv-opencode-litellm) | opencode plus LiteLLM and PostgreSQL in devenv. |
 | [`home-manager-opencode-litellm`](./example/home-manager-opencode-litellm) | Home Manager harness and LiteLLM user services, with a NixOS test. |
 | [`nixos-harness-one-shot`](./example/nixos-harness-one-shot) | NixOS wrapper with `daemon = false`. |
 | [`nixos-headroom`](./example/nixos-headroom) | Headroom service and liveness check. |
 | [`nixos-opencode-litellm`](./example/nixos-opencode-litellm) | NixOS opencode plus LiteLLM and PostgreSQL, with a NixOS test. |
+
+The `devenv-copilot` example reads its secret from
+`~/.config/harness-jail/secrets/harness-flake/default/environment_file`, outside
+the project root. Set it with `secretspec set environment_file` (or let the
+first `devenv shell` prompt for it). Keeping it outside the project means the
+sandbox's automatic read-write mount of the project root does not expose it.
 
 ## Troubleshooting
 
@@ -571,7 +610,8 @@ If you use custom certificates, mount them with `readOnlyPaths` and set
 
 This is intentional. Only `homeDir`, `readOnlyPaths`, `readWritePaths`, and (in
 devenv) the project root are visible from your host files. Add the paths you need
-explicitly.
+explicitly. `environmentFile` is masked at its original path inside the sandbox,
+but symlinks or copies under other mounted paths can still expose it.
 
 ### Environment variables are missing
 
@@ -609,17 +649,24 @@ NIXPKGS_ALLOW_UNFREE=1 nix flake check --impure
 # Build individual packages
 NIXPKGS_ALLOW_UNFREE=1 nix build --impure .#copilot
 nix build .#headroom
+nix build .#litellm
 
 # Update package versions
 nix develop .#updateShell
 ./packages/copilot/update.sh
 ./packages/headroom/update.sh
+./packages/litellm/update.sh
 
 # Format Nix sources
 nix fmt
 ```
 
-The `updateShell` includes `nix`, `curl`, `nodejs`, and `jq`, and prints the
-available `update.sh` scripts.
+The `updateShell` includes `nix`, `curl`, `jq`, `nodejs_latest`, `python3`, and
+`uv`, and prints the available `update.sh` scripts.
 
 The flake's checks are NixOS VM tests and therefore run only on Linux.
+
+## License
+
+The flake, modules, and examples are licensed under the Apache License 2.0. See
+[`LICENSE`](./LICENSE).

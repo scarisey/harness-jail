@@ -1,10 +1,9 @@
 {
   self,
   pkgs,
-  lib ? pkgs.lib,
   ...
 }:
-pkgs.testers.nixosTest {
+(pkgs.extend self.overlays.default).testers.nixosTest {
   name = "nixos-opencode-litellm";
 
   nodes.machine = {
@@ -69,7 +68,7 @@ pkgs.testers.nixosTest {
     };
 
     systemd.tmpfiles.rules = [
-      "f /run/litellm.env 0644 root root - LITELLM_MASTER_KEY=5ad24882a916245c31586c77754900ef232f54fdc22589108947ee2ace1b4bfb"
+      "f /run/litellm.env 0640 root litellm - LITELLM_MASTER_KEY=5ad24882a916245c31586c77754900ef232f54fdc22589108947ee2ace1b4bfb"
     ];
 
     environment.systemPackages = [pkgs.curl];
@@ -81,6 +80,9 @@ pkgs.testers.nixosTest {
     machine.wait_for_unit("litellm.service")
     machine.wait_for_open_port(4000)
     machine.succeed("curl -fsS http://127.0.0.1:4000/health/liveliness")
+    machine.succeed("sudo -u postgres psql -d litellm -tAc \"SELECT count(*) FROM _prisma_migrations\"")
+    machine.succeed("test -d /var/lib/litellm/ui")
+    machine.succeed("litellm --version")
     machine.succeed("harness --version")
   '';
 }

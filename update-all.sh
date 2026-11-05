@@ -2,10 +2,13 @@
 
 set -euo pipefail
 
-RUNDIR=$(dirname "$(realpath "$0")")
+RUNDIR=$(cd "$(dirname "$0")" && pwd)
 
 cd "$RUNDIR/packages/copilot"
 ./update.sh
 
 cd "$RUNDIR/packages/headroom"
+./update.sh
+
+cd "$RUNDIR/packages/litellm"
 ./update.sh

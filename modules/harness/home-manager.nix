@@ -21,9 +21,11 @@ in {
       exec ${bwrapCommand}
     '';
   in {
-    home.activation.createHarnessJailState = lib.hm.dag.entryAfter ["writeBoundary"] ''
-      run mkdir -p $VERBOSE_ARG ${lib.escapeShellArg (toString cfg.homeDir)}
-    '';
+    home.activation.createHarnessJailState = lib.mkIf (cfg.homeDir != null) (
+      lib.hm.dag.entryAfter ["writeBoundary"] ''
+        run mkdir -p $VERBOSE_ARG ${lib.escapeShellArg (toString cfg.homeDir)}
+      ''
+    );
 
     systemd.user.services.${serviceName} = lib.mkIf cfg.daemon {
       Unit = {
@@ -33,7 +35,7 @@ in {
 
       Service = {
         ExecStart = "${sandboxedHarness}";
-        WorkingDirectory = cfg.homeDir;
+        WorkingDirectory = lib.mkIf (cfg.homeDir != null) cfg.homeDir;
         Restart = "on-failure";
         RestartSec = "5s";
       };
