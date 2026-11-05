@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 jobs:
-  build_pullix:
+  build_harness_jail:
     runs-on: ubuntu-latest
     env:
       NIXPKGS_ALLOW_BROKEN: "1"
