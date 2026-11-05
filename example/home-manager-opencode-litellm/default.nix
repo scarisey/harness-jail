@@ -4,7 +4,7 @@
   pkgs,
   ...
 }:
-pkgs.testers.nixosTest {
+(pkgs.extend self.overlays.default).testers.nixosTest {
   name = "home-manager-opencode-litellm";
 
   nodes.machine = {

@@ -28,7 +28,7 @@ jail with only the files, environment, and network access you allow.
 | `harness-jail` module | Wraps any CLI in a Bubblewrap sandbox. Installs a `harness` command and optionally runs the sandboxed command as a systemd service. |
 | `headroom` module | Runs the [Headroom](https://github.com/headroomlabs-ai/headroom) context-optimization proxy, sandboxed, as a service. |
 | `litellm` module | Runs the [LiteLLM](https://github.com/BerriAI/litellm) proxy with a Nix-configured JSON config, sandboxed, as a service. |
-| Packages | `copilot` (GitHub Copilot CLI), `headroom`, and `litellm-prisma`. |
+| Packages | `copilot` (GitHub Copilot CLI), `headroom`, and `litellm`. |
 
 By default the sandbox:
 
@@ -65,8 +65,8 @@ is tested and the sandbox modules are intended for Linux.
 
 ### 2. NixOS
 
-Import the module and enable the overlay if you want `pkgs.copilot` or
-`pkgs.headroom`:
+Import the module and enable the overlay if you want `pkgs.copilot`,
+`pkgs.headroom`, or `pkgs.litellm`:
 
 ```nix
 {
@@ -394,9 +394,11 @@ placeholders; do not commit real credentials to a Nix file. Use
 `environment` take precedence over the file.
 
 The LiteLLM sandbox always shares the host network namespace so it can reach
-model providers and databases. The service includes a Nix-compatible Prisma
-setup, so database-backed LiteLLM features work without downloading Prisma
-engines at runtime.
+model providers and databases. The default `services.litellm.package` is
+`pkgs.litellm` from this flake's overlay; import the overlay to get a
+full-server build with the proxy dependencies and a pre-generated Prisma client.
+Database-backed features then work without downloading Prisma engines or a Node
+toolchain at runtime.
 
 > **NixOS:** nixpkgs also defines `services.litellm`. When importing this
 > flake's module, disable the upstream module first:
@@ -416,14 +418,15 @@ The flake exports:
 | --- | --- |
 | `packages.<system>.copilot` | GitHub Copilot CLI (`copilot`). |
 | `packages.<system>.headroom` | Headroom AI (`headroom`). |
-| `packages.<system>.litellm-prisma` | LiteLLM with a pre-generated Prisma client. |
-| `overlays.default` | Adds `pkgs.copilot` and `pkgs.headroom`. |
+| `packages.<system>.litellm` | LiteLLM proxy with the full server dependency set. |
+| `overlays.default` | Adds `pkgs.copilot`, `pkgs.headroom`, and `pkgs.litellm`. |
 
 Build a package directly:
 
 ```sh
 NIXPKGS_ALLOW_UNFREE=1 nix build --impure .#copilot
 nix build .#headroom
+nix build .#litellm
 ```
 
 or use the overlay:
@@ -434,8 +437,9 @@ or use the overlay:
 }
 ```
 
-`overlays.default` does **not** add `litellm-prisma`; reference it from the flake
-outputs if you need it.
+The overlay is required for the full LiteLLM build. nixpkgs also provides a
+`litellm` package, but it does not include the proxy extras; importing the
+overlay overrides it with the full-server package used by the modules.
 
 `copilot` is unfree. Enable it with `nixpkgs.config.allowUnfree = true`, or set
 `NIXPKGS_ALLOW_UNFREE=1` when building it directly.
@@ -609,17 +613,19 @@ NIXPKGS_ALLOW_UNFREE=1 nix flake check --impure
 # Build individual packages
 NIXPKGS_ALLOW_UNFREE=1 nix build --impure .#copilot
 nix build .#headroom
+nix build .#litellm
 
 # Update package versions
 nix develop .#updateShell
 ./packages/copilot/update.sh
 ./packages/headroom/update.sh
+./packages/litellm/update.sh
 
 # Format Nix sources
 nix fmt
 ```
 
-The `updateShell` includes `nix`, `curl`, `nodejs`, and `jq`, and prints the
-available `update.sh` scripts.
+The `updateShell` includes `nix`, `curl`, `jq`, `nodejs`, `python3`, and `uv`, and
+prints the available `update.sh` scripts.
 
 The flake's checks are NixOS VM tests and therefore run only on Linux.

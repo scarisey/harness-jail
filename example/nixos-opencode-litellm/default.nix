@@ -4,7 +4,7 @@
   lib ? pkgs.lib,
   ...
 }:
-pkgs.testers.nixosTest {
+(pkgs.extend self.overlays.default).testers.nixosTest {
   name = "nixos-opencode-litellm";
 
   nodes.machine = {

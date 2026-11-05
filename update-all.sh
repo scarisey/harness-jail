@@ -9,3 +9,6 @@ cd "$RUNDIR/packages/copilot"
 
 cd "$RUNDIR/packages/headroom"
 ./update.sh
+
+cd "$RUNDIR/packages/litellm"
+./update.sh

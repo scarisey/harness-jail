@@ -10,7 +10,12 @@ in rec {
     package = lib.mkOption {
       type = lib.types.package;
       default = pkgs.litellm;
-      description = "LiteLLM package to run. Custom packages must expose the LiteLLM source tree for Prisma client generation.";
+      description = ''
+        LiteLLM package to run. The default requires harness-jail's overlay,
+        which provides a LiteLLM build with the full proxy dependency set.
+        Custom packages must expose the proxy server and may expose
+        `passthru.pythonPath` for extra Python modules.
+      '';
     };
 
     host = lib.mkOption {
@@ -61,7 +66,6 @@ in rec {
     stateDir,
   }: let
     configFile = jsonFormat.generate "litellm-config.json" cfg.settings;
-    prismaOverlay = pkgs.callPackage ../../packages/litellm-prisma {litellm = cfg.package;};
 
     environmentAssignments = lib.mapAttrsToList (name: value: "${name}=${value}") cfg.environment;
 
@@ -165,9 +169,6 @@ in rec {
         "PRISMA_CLI_PATH"
         "${pkgs.prisma_6}/bin/prisma"
         "--setenv"
-        "PYTHONPATH"
-        "${prismaOverlay}/${pkgs.python3.sitePackages}:${prismaOverlay.pythonPath}"
-        "--setenv"
         "PRISMA_QUERY_ENGINE_BINARY"
         queryEnginePath
         "--setenv"
@@ -175,7 +176,12 @@ in rec {
         schemaEnginePath
       ]
       ++ envFileBindFlags
-      ++ envFlags;
+      ++ envFlags
+      ++ lib.optionals (cfg.package ? pythonPath) [
+        "--setenv"
+        "PYTHONPATH"
+        cfg.package.pythonPath
+      ];
   in
     pkgs.writeShellScriptBin "litellm-sandboxed" ''
       set -euo pipefail

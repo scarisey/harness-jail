@@ -6,6 +6,7 @@
 }: {
   overlays = [
     inputs.opencode.overlays.default
+    inputs.harness-flake.overlays.default
   ];
   packages = with pkgs; [
     opencode

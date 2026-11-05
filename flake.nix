@@ -10,12 +10,30 @@
       url = "github:nix-community/home-manager";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    pyproject-nix = {
+      url = "github:pyproject-nix/pyproject.nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+    uv2nix = {
+      url = "github:pyproject-nix/uv2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+    };
+    pyproject-build-systems = {
+      url = "github:pyproject-nix/build-system-pkgs";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.pyproject-nix.follows = "pyproject-nix";
+      inputs.uv2nix.follows = "uv2nix";
+    };
   };
 
   outputs = {
     self,
     nixpkgs,
     home-manager,
+    pyproject-nix,
+    uv2nix,
+    pyproject-build-systems,
     ...
   }: let
     supportedSystems = ["x86_64-linux" "aarch64-linux" "aarch64-darwin"];
@@ -33,6 +51,8 @@
           pkgs.jq
           pkgs.nix
           pkgs.nodejs_latest
+          pkgs.python3
+          pkgs.uv
         ];
         shellHook = ''
           echo "Launch update commands here."
@@ -45,22 +65,27 @@
     packages = forAllSystems ({pkgs, ...}: {
       copilot = pkgs.callPackage ./packages/copilot {};
       headroom = pkgs.callPackage ./packages/headroom {};
-      litellm-prisma = pkgs.callPackage ./packages/litellm-prisma {};
+      litellm = pkgs.callPackage ./packages/litellm {
+        inherit uv2nix pyproject-nix pyproject-build-systems;
+      };
     });
 
     checks = forAllSystems ({pkgs, ...}:
       nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         nixos-harness-one-shot = pkgs.callPackage ./example/nixos-harness-one-shot {inherit self;};
         nixos-headroom = pkgs.callPackage ./example/nixos-headroom {inherit self;};
-                    #        nixos-opencode-litellm = pkgs.callPackage ./example/nixos-opencode-litellm {inherit self;};
-                    #        home-manager-opencode-litellm = pkgs.callPackage ./example/home-manager-opencode-litellm {
-                    #          inherit self home-manager;
-                    #        };
+        nixos-opencode-litellm = pkgs.callPackage ./example/nixos-opencode-litellm {inherit self;};
+        home-manager-opencode-litellm = pkgs.callPackage ./example/home-manager-opencode-litellm {
+          inherit self home-manager;
+        };
       });
 
     overlays.default = final: prev: {
       copilot = self.packages.${final.stdenv.hostPlatform.system}.copilot;
       headroom = self.packages.${final.stdenv.hostPlatform.system}.headroom;
+      litellm = final.callPackage ./packages/litellm {
+        inherit uv2nix pyproject-nix pyproject-build-systems;
+      };
     };
 
     nixosModules = {
