@@ -30,7 +30,7 @@ jobs:
       - name: Build packages
         run: |
           nix build --impure --accept-flake-config .#packages.x86_64-linux.copilot
-          nix build --impure --accept-flake-config .#packages.x86_64-linux.litellm-prisma
+          #nix build --impure --accept-flake-config .#packages.x86_64-linux.litellm-prisma
           nix build --impure --accept-flake-config .#packages.x86_64-linux.headroom
       - name: Check
         run: |
