@@ -1,15 +1,32 @@
 #!/usr/bin/env bash
 
-CURRENT_VERSION=$(jq -r '.version' versions.json)
+set -euo pipefail
+
+cd "$(dirname "$0")"
+
+require_value() {
+  local name="$1"
+  local value="$2"
+  if [[ -z "$value" || "$value" == "null" ]]; then
+    echo "error: $name is empty" >&2
+    exit 1
+  fi
+}
+
+CURRENT_VERSION=$(jq -er '.version | select(type == "string" and length > 0)' versions.json)
 echo "Current version: $CURRENT_VERSION"
 LATEST_VERSION=$(npm view @github/copilot version)
+require_value "latest version" "$LATEST_VERSION"
 echo "Latest version:  $LATEST_VERSION"
 
 fetch_sri() {
   local url="$1"
   local raw
-  raw=$(nix-prefetch-url --type sha256 "$url" 2>/dev/null)
-  nix hash to-sri --type sha256 "$raw" 2>/dev/null
+  local sri
+  raw=$(nix-prefetch-url --type sha256 "$url")
+  sri=$(nix hash to-sri --type sha256 "$raw")
+  require_value "hash for $url" "$sri"
+  printf '%s\n' "$sri"
 }
 
 # Check if update is needed
@@ -29,8 +46,9 @@ if [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
     --arg da  "$SHA256_DARWIN_ARM64" \
     '.version=$v | .sha256Linux_x64=$lx | .sha256Linux_arm64=$la | .sha256Darwin_arm64=$da' \
     versions.json > "$tmpFile"
-  cp "$tmpFile" versions.json
-  rm -f "$tmpFile"
+  jq -e '.version and .sha256Linux_x64 and .sha256Linux_arm64 and .sha256Darwin_arm64' "$tmpFile" >/dev/null
+  mv "$tmpFile" versions.json
+  trap - EXIT
 
   echo "Updated versions.json:"
   cat versions.json

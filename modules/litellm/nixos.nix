@@ -1,4 +1,3 @@
-# nix/litellm/nixos-module.nix
 {
   config,
   pkgs,
@@ -41,5 +40,10 @@ in {
         RestartSec = "5s";
       };
     };
+
+    environment.systemPackages = [
+      cfg.package
+      pkgs.bubblewrap
+    ];
   };
 }

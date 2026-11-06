@@ -43,9 +43,9 @@ jobs:
       - name: Update flake inputs
         run: |
           nix flake update --commit-lock-file --accept-flake-config
-      - name: Update version of Headroom
+      - name: Update package versions
         run: |
-          nix develop .#devShells.x86_64-linux.updateShell --command './update-all.sh'
+          nix develop --accept-flake-config .#devShells.x86_64-linux.updateShell --command './update-all.sh'
           git add .
           git diff --cached --quiet || git commit -m "chore:update packages versions"
       - name: Push changes to remote

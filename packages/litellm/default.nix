@@ -50,6 +50,16 @@
               --schema "$TMPDIR/schema.prisma"
 
           test -f "$out/${python.sitePackages}/prisma/client.py"
+
+          # The generated client records the temporary build schema path.
+          # Point it at the schema shipped with LiteLLM instead.
+          grep -rl "SCHEMA_PATH = Path('/build/schema.prisma')" \
+            "$out/${python.sitePackages}/prisma" 2>/dev/null | while IFS= read -r file; do
+            substituteInPlace "$file" \
+              --replace-fail \
+              "SCHEMA_PATH = Path('/build/schema.prisma')" \
+              "SCHEMA_PATH = Path('${final.litellm}/${python.sitePackages}/litellm/proxy/schema.prisma')"
+          done
         '';
     });
   };
@@ -94,12 +104,20 @@
           wrapProgram "$out/bin/$bin" \
             --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [pkgs.libsndfile]}
         done
+
+        LD_LIBRARY_PATH="${lib.makeLibraryPath [pkgs.libsndfile]}" \
+        SSL_CERT_FILE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" \
+        REQUESTS_CA_BUNDLE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" \
+        CURL_CA_BUNDLE="${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" \
+        PYTHONPATH="$out/${python.sitePackages}" \
+          ${python.interpreter} -c "import litellm.proxy.proxy_server"
       '';
 
     meta = {
       description = "LiteLLM proxy with the full server dependency set";
       homepage = "https://github.com/BerriAI/litellm";
       license = lib.licenses.mit;
+      mainProgram = "litellm";
       maintainers = [
         {
           name = "Sylvain Carisey";
@@ -110,7 +128,6 @@
       platforms = [
         "x86_64-linux"
         "aarch64-linux"
-        "aarch64-darwin"
       ];
     };
 
@@ -119,6 +136,9 @@
       // {
         inherit python pythonSet venv version;
         pythonPath = "${package}/${python.sitePackages}";
+        prisma = pkgs.prisma_6;
+        prismaEngines = pkgs.prisma-engines_6;
+        isLiteLLMProxy = true;
       };
   });
 in

@@ -120,6 +120,13 @@ in rec {
       map (path: ["--bind" path path]) (lib.unique (map toString cfg.readWritePaths))
     );
 
+    # An empty regular file works on `nodev` filesystems, unlike /dev/null.
+    envFileMaskFlags = lib.optionals (cfg.environmentFile != null) [
+      "--ro-bind"
+      (toString pkgs.emptyFile)
+      cfg.environmentFile
+    ];
+
     bwrapArgs =
       [
         "--unshare-all"
@@ -178,13 +185,19 @@ in rec {
         "REQUESTS_CA_BUNDLE"
         "/etc/ssl/certs/ca-certificates.crt"
         "--setenv"
+        "CURL_CA_BUNDLE"
+        "/etc/ssl/certs/ca-certificates.crt"
+        "--setenv"
         "PYTHONUNBUFFERED"
         "1"
+        "--cap-drop"
+        "ALL"
       ]
       ++ envFileBindFlags
-      ++ envFlags
       ++ readOnlyBindFlags
-      ++ readWriteBindFlags;
+      ++ readWriteBindFlags
+      ++ envFileMaskFlags
+      ++ envFlags;
   in
     pkgs.writeShellScriptBin "headroom-proxy" ''
       set -euo pipefail

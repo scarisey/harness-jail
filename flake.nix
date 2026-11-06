@@ -62,13 +62,16 @@
       };
     });
 
-    packages = forAllSystems ({pkgs, ...}: {
-      copilot = pkgs.callPackage ./packages/copilot {};
-      headroom = pkgs.callPackage ./packages/headroom {};
-      litellm = pkgs.callPackage ./packages/litellm {
-        inherit uv2nix pyproject-nix pyproject-build-systems;
-      };
-    });
+    packages = forAllSystems ({pkgs, ...}:
+      {
+        copilot = pkgs.callPackage ./packages/copilot {};
+        headroom = pkgs.callPackage ./packages/headroom {};
+      }
+      // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+        litellm = pkgs.callPackage ./packages/litellm {
+          inherit uv2nix pyproject-nix pyproject-build-systems;
+        };
+      });
 
     checks = forAllSystems ({pkgs, ...}:
       nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
@@ -80,13 +83,17 @@
         };
       });
 
-    overlays.default = final: prev: {
-      copilot = self.packages.${final.stdenv.hostPlatform.system}.copilot;
-      headroom = self.packages.${final.stdenv.hostPlatform.system}.headroom;
-      litellm = final.callPackage ./packages/litellm {
-        inherit uv2nix pyproject-nix pyproject-build-systems;
+    overlays.default = final: prev:
+      nixpkgs.lib.optionalAttrs (builtins.elem prev.stdenv.hostPlatform.system supportedSystems) {
+        copilot = final.callPackage ./packages/copilot {};
+        headroom = final.callPackage ./packages/headroom {};
+      }
+      // nixpkgs.lib.optionalAttrs (prev.stdenv.hostPlatform.isLinux
+        && builtins.elem prev.stdenv.hostPlatform.system supportedSystems) {
+        litellm = final.callPackage ./packages/litellm {
+          inherit uv2nix pyproject-nix pyproject-build-systems;
+        };
       };
-    };
 
     nixosModules = {
       harness-jail = ./modules/harness/nixos.nix;

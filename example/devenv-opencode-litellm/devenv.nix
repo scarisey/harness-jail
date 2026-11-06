@@ -19,9 +19,6 @@
       enableNetwork = true;
       args = ["serve"];
       clearEnv = true;
-      readWritePaths = [
-        ../../.
-      ];
       homeDir = ./.home;
     };
 

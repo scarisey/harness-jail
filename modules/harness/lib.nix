@@ -19,7 +19,7 @@ with lib; let
       };
 
       wrapperName = mkOption {
-        type = types.strMatching "[A-Za-z0-9._-]+";
+        type = types.strMatching "[A-Za-z0-9][A-Za-z0-9._-]*";
         default = "harness";
         description = "Name of the wrapper command installed on PATH.";
       };
@@ -86,22 +86,34 @@ with lib; let
       environmentFile = mkOption {
         type = types.nullOr types.str;
         default = null;
-        description = "Shell-compatible file of environment variables loaded by the wrapper and passed into the sandbox.";
+        description = ''
+          Shell-compatible file of environment variables loaded by the wrapper
+          and passed into the sandbox. The file is masked inside the sandbox so
+          it cannot be read there, even if it lives under a mounted path.
+        '';
       };
 
       homeDir = mkOption {
-        type = types.path;
-        description = "Dedicated persistent home directory for the sandboxed executable.";
+        type = types.nullOr types.path;
+        default = null;
+        description = ''
+          Dedicated persistent home directory for the sandboxed executable.
+          When null, the wrapper uses a per-user state directory at runtime
+          (`''${XDG_STATE_HOME:-$HOME/.local/state}/harness-jail`).
+        '';
       };
     };
   };
 
   # f : { cfg, bwrapCommand } -> nixConfig
-  mkConfig = config: f: let
-    cfg = config.services.harness-jail;
+  mkConfigFor = config: cfg: f: let
+    staticHomeDir = cfg.homeDir != null;
+    homeDirStr = optionalString staticHomeDir (toString cfg.homeDir);
     readOnlyPathsFinal = lib.unique (map (p: builtins.toString p) cfg.readOnlyPaths);
     readWritePathsFinal = lib.unique (map (p: builtins.toString p) (
-      cfg.readWritePaths ++ [cfg.homeDir] ++ lib.optional (builtins.hasAttr "devenv" config) config.devenv.root
+      cfg.readWritePaths
+      ++ lib.optional staticHomeDir cfg.homeDir
+      ++ lib.optional (builtins.hasAttr "devenv" config) config.devenv.root
     ));
     packageFinal = pkgs.writeShellScriptBin cfg.wrapperName ''
       export PATH="${lib.makeBinPath ([cfg.package] ++ cfg.extraPackages)}''${PATH:+:$PATH}"
@@ -112,6 +124,7 @@ with lib; let
       [
         "--unshare-all"
         "--die-with-parent"
+        "--new-session"
         "--dev"
         "/dev"
         "--proc"
@@ -146,36 +159,83 @@ with lib; let
         "ALL"
       ]
       ++ optional cfg.clearEnv "--clearenv";
-    environment =
-      optionalAttrs cfg.clearEnv {
-        HOME = builtins.toString cfg.homeDir;
-        PATH = lib.makeBinPath (cfg.extraPackages ++ [cfg.package]);
-        SSL_CERT_FILE = "/etc/ssl/certs/ca-certificates.crt";
-      }
-      // cfg.environment;
-    environmentArgs = concatLists (mapAttrsToList (name: value: ["--setenv" name value]) environment);
+
+    # Built-in defaults intentionally exclude HOME. It is emitted before the
+    # environment file so the file can override it, while explicit
+    # cfg.environment values are emitted afterwards and still win.
+    defaultEnvironment = optionalAttrs cfg.clearEnv {
+      PATH = lib.makeBinPath (cfg.extraPackages ++ [cfg.package]);
+      SSL_CERT_FILE = "/etc/ssl/certs/ca-certificates.crt";
+      REQUESTS_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt";
+      CURL_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt";
+    };
+    defaultEnvironmentArgs = concatLists (mapAttrsToList (name: value: ["--setenv" name value]) defaultEnvironment);
+    userEnvironmentArgs = concatLists (mapAttrsToList (name: value: ["--setenv" name value]) cfg.environment);
+
+    homeEnvironmentArg =
+      if !cfg.clearEnv
+      then ""
+      else if staticHomeDir
+      then escapeShellArgs ["--setenv" "HOME" homeDirStr]
+      else ''--setenv HOME "$HARNESS_JAIL_HOME"'';
+
+    homeBindArg =
+      if staticHomeDir
+      then ""
+      else ''--bind "$HARNESS_JAIL_HOME" "$HARNESS_JAIL_HOME"'';
+
+    homeDirSetup = optionalString (!staticHomeDir) ''
+      HARNESS_JAIL_HOME="''${XDG_STATE_HOME:-$HOME/.local/state}/harness-jail"
+      umask 077
+      mkdir -p "$HARNESS_JAIL_HOME"
+    '';
+
     bwrapSuffixArgs =
       concatLists (map (path: ["--ro-bind" path path]) readOnlyPathsFinal)
       ++ concatLists (map (path: ["--bind" path path]) readWritePathsFinal)
       ++ optional cfg.enableNetwork "--share-net";
 
+    # The wrapper sources the file outside the sandbox. Mask it afterwards so
+    # a process inside cannot read the secrets from a mounted directory.
+    environmentFileMaskArgs = optionals (cfg.environmentFile != null) [
+      "--ro-bind"
+      (toString pkgs.emptyFile)
+      cfg.environmentFile
+    ];
+
     wrappedCommand = "${packageFinal}/bin/${cfg.wrapperName}";
-    bwrapArgs =
-      bwrapPrefixArgs
-      ++ environmentArgs
-      ++ bwrapSuffixArgs
-      ++ ["--" wrappedCommand]
-      ++ cfg.args;
+
     bwrapCommand =
       if cfg.environmentFile == null
-      then "${pkgs.bubblewrap}/bin/bwrap ${escapeShellArgs bwrapArgs}"
+      then "${pkgs.writeShellScript "bwrap-harness" ''
+        set -eo pipefail
+        ${homeDirSetup}
+        exec ${pkgs.bubblewrap}/bin/bwrap \
+          ${escapeShellArgs bwrapPrefixArgs} \
+          ${homeEnvironmentArg} \
+          ${escapeShellArgs defaultEnvironmentArgs} \
+          ${escapeShellArgs userEnvironmentArgs} \
+          ${homeBindArg} \
+          ${escapeShellArgs bwrapSuffixArgs} \
+          ${escapeShellArgs environmentFileMaskArgs} \
+          -- ${escapeShellArgs ([wrappedCommand] ++ cfg.args)} "$@"
+      ''}"
       else if !cfg.clearEnv
       then "${pkgs.writeShellScript "bwrap-harness" ''
         set -eo pipefail
+        ${homeDirSetup}
         set -a
         . ${escapeShellArg cfg.environmentFile}
         set +a
-        exec ${pkgs.bubblewrap}/bin/bwrap ${escapeShellArgs bwrapArgs} "$@"
+        exec ${pkgs.bubblewrap}/bin/bwrap \
+          ${escapeShellArgs bwrapPrefixArgs} \
+          ${homeEnvironmentArg} \
+          ${escapeShellArgs defaultEnvironmentArgs} \
+          ${escapeShellArgs userEnvironmentArgs} \
+          ${homeBindArg} \
+          ${escapeShellArgs bwrapSuffixArgs} \
+          ${escapeShellArgs environmentFileMaskArgs} \
+          -- ${escapeShellArgs ([wrappedCommand] ++ cfg.args)} "$@"
       ''}"
       else let
         innerScript = pkgs.writeShellScript "bwrap-harness-inner" ''
@@ -185,20 +245,41 @@ with lib; let
           shift
           set +a
           unset PWD SHLVL _
+          ${optionalString (!staticHomeDir) ''
+            sandbox_home="$HARNESS_JAIL_HOME"
+            unset HARNESS_JAIL_HOME
+          ''}
           bwrap_args=(${escapeShellArgs bwrapPrefixArgs})
+          ${optionalString staticHomeDir ''
+            bwrap_args+=(${escapeShellArgs ["--setenv" "HOME" homeDirStr]})
+          ''}
+          ${optionalString (!staticHomeDir) ''
+            bwrap_args+=(--setenv HOME "$sandbox_home")
+          ''}
+          bwrap_args+=(${escapeShellArgs defaultEnvironmentArgs})
           while IFS= read -r -d "" entry; do
             bwrap_args+=(--setenv "''${entry%%=*}" "''${entry#*=}")
           done < <(${pkgs.coreutils}/bin/env -0)
-          bwrap_args+=(${escapeShellArgs environmentArgs})
+          bwrap_args+=(${escapeShellArgs userEnvironmentArgs})
+          ${optionalString (!staticHomeDir) ''
+            bwrap_args+=(--bind "$sandbox_home" "$sandbox_home")
+          ''}
           bwrap_args+=(${escapeShellArgs bwrapSuffixArgs})
+          bwrap_args+=(${escapeShellArgs environmentFileMaskArgs})
           bwrap_args+=(-- ${escapeShellArgs ([wrappedCommand] ++ cfg.args)} "$@")
           exec ${pkgs.bubblewrap}/bin/bwrap "''${bwrap_args[@]}"
         '';
       in "${pkgs.writeShellScript "bwrap-harness" ''
-        exec ${pkgs.coreutils}/bin/env -i ${pkgs.bash}/bin/bash --noprofile --norc ${innerScript} ${escapeShellArg cfg.environmentFile} "$@"
+        set -eo pipefail
+        ${homeDirSetup}
+        exec ${pkgs.coreutils}/bin/env -i \
+          ${optionalString (!staticHomeDir) ''HARNESS_JAIL_HOME="$HARNESS_JAIL_HOME"''} \
+          ${pkgs.bash}/bin/bash --noprofile --norc ${innerScript} ${escapeShellArg cfg.environmentFile} "$@"
       ''}";
   in
     mkIf cfg.enable (f {inherit cfg bwrapCommand;});
 in {
-  inherit mkOptions mkConfig;
+  inherit mkOptions mkConfigFor;
+
+  mkConfig = config: f: mkConfigFor config config.services.harness-jail f;
 }

@@ -8,50 +8,63 @@
   cfg = config.services.harness-jail;
   serviceName = "harness-jail";
   stateDir = "/var/lib/${serviceName}";
+  daemonHomeDir =
+    if cfg.homeDir != null
+    then cfg.homeDir
+    else stateDir;
+  daemonCfg =
+    cfg
+    // {
+      homeDir = daemonHomeDir;
+    };
 in {
   options = lib.recursiveUpdate bwrapModule.mkOptions {
     services.harness-jail.homeDir = {
-      default = stateDir;
-      defaultText = lib.literalExpression ''"/var/lib/harness-jail"'';
+      default = null;
+      defaultText = lib.literalExpression "null";
     };
   };
 
-  config = bwrapModule.mkConfig config ({bwrapCommand, ...}: let
-    sandboxedHarness = pkgs.writeShellScript "${serviceName}-sandboxed" ''
-      exec ${bwrapCommand}
-    '';
-  in {
-    users.users.${serviceName} = {
-      isSystemUser = true;
-      group = serviceName;
-      description = "User running the sandboxed LLM harness";
-      home = stateDir;
-      createHome = true;
-    };
+  config = lib.mkMerge [
+    (bwrapModule.mkConfigFor config cfg ({bwrapCommand, ...}: {
+      environment.systemPackages = [
+        pkgs.bubblewrap
+        (pkgs.writeShellScriptBin cfg.wrapperName ''
+          exec ${bwrapCommand} "$@"
+        '')
+      ];
+    }))
 
-    users.groups.${serviceName} = {};
-
-    systemd.services.${serviceName} = lib.mkIf cfg.daemon {
-      description = "LLM harness sandboxed via Bubblewrap";
-      after = ["network.target"];
-      wantedBy = ["multi-user.target"];
-
-      serviceConfig = {
-        ExecStart = "${sandboxedHarness}";
-        User = serviceName;
-        Group = serviceName;
-        StateDirectory = serviceName;
-        WorkingDirectory = stateDir;
-        Restart = "on-failure";
-        RestartSec = "5s";
+    (lib.mkIf cfg.daemon (bwrapModule.mkConfigFor config daemonCfg ({bwrapCommand, ...}: let
+      sandboxedHarness = pkgs.writeShellScript "${serviceName}-sandboxed" ''
+        exec ${bwrapCommand}
+      '';
+    in {
+      users.users.${serviceName} = {
+        isSystemUser = true;
+        group = serviceName;
+        description = "User running the sandboxed LLM harness";
+        home = daemonHomeDir;
+        createHome = true;
       };
-    };
 
-    environment.systemPackages = [
-      pkgs.bubblewrap
-      (pkgs.writeShellScriptBin cfg.wrapperName ''
-        exec ${bwrapCommand} "$@"
-      '')
-    ];
-  });
+      users.groups.${serviceName} = {};
+
+      systemd.services.${serviceName} = {
+        description = "LLM harness sandboxed via Bubblewrap";
+        after = ["network.target"];
+        wantedBy = ["multi-user.target"];
+
+        serviceConfig = {
+          ExecStart = "${sandboxedHarness}";
+          User = serviceName;
+          Group = serviceName;
+          StateDirectory = serviceName;
+          WorkingDirectory = daemonHomeDir;
+          Restart = "on-failure";
+          RestartSec = "5s";
+        };
+      };
+    })))
+  ];
 }

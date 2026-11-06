@@ -32,7 +32,11 @@ in rec {
 
     environment = lib.mkOption {
       type = lib.types.attrsOf lib.types.str;
-      default = {};
+      default = {
+        SCARF_NO_ANALYTICS = "True";
+        DO_NOT_TRACK = "True";
+        ANONYMIZED_TELEMETRY = "False";
+      };
       example = {LITELLM_LOG = "INFO";};
       description = "Environment variables passed to LiteLLM.";
     };
@@ -65,6 +69,11 @@ in rec {
     cfg,
     stateDir,
   }: let
+    packageFinal =
+      lib.warnIf (!(cfg.package ? isLiteLLMProxy))
+      "services.litellm.package is not harness-jail's full LiteLLM build. Import harness-jail.overlays.default to get the proxy dependencies and generated Prisma client."
+      cfg.package;
+
     configFile = jsonFormat.generate "litellm-config.json" cfg.settings;
 
     environmentAssignments = lib.mapAttrsToList (name: value: "${name}=${value}") cfg.environment;
@@ -79,14 +88,23 @@ in rec {
       "/etc/litellm/env"
     ];
 
-    # Prisma binaries compiled and patched for Nix
-    prismaEngines = pkgs.prisma-engines_6;
+    # An empty regular file works on `nodev` filesystems, unlike /dev/null.
+    envFileMaskFlags = lib.optionals (cfg.environmentFile != null) [
+      "--ro-bind"
+      (toString pkgs.emptyFile)
+      cfg.environmentFile
+    ];
+
+    # Use the Prisma CLI and engines that were used to build the package when
+    # available, so a package from another nixpkgs cannot drift from them.
+    prismaEngines = packageFinal.prismaEngines or pkgs.prisma-engines_6;
+    prismaCli = packageFinal.prisma or pkgs.prisma_6;
     queryEnginePath = "${prismaEngines}/bin/query-engine";
     schemaEnginePath = "${prismaEngines}/bin/schema-engine";
 
     litellmCommand =
       [
-        "${cfg.package}/bin/litellm"
+        "${packageFinal}/bin/litellm"
         "--config"
         "/etc/litellm/config.json"
         "--host"
@@ -143,13 +161,25 @@ in rec {
         "--ro-bind"
         "${configFile}"
         "/etc/litellm/config.json"
+        "--symlink"
+        "${pkgs.bashNonInteractive}/bin/sh"
+        "/bin/sh"
+        "--symlink"
+        "${pkgs.coreutils}/bin/env"
+        "/usr/bin/env"
         "--clearenv"
         "--setenv"
         "PATH"
-        "${cfg.package}/bin:${prismaEngines}/bin:${pkgs.prisma_6}/bin:${pkgs.coreutils}/bin:${lib.getBin pkgs.openssl}/bin"
+        "${packageFinal}/bin:${prismaEngines}/bin:${prismaCli}/bin:${pkgs.coreutils}/bin:${lib.getBin pkgs.openssl}/bin"
         "--setenv"
         "HOME"
         "/tmp/litellm-state"
+        "--setenv"
+        "LITELLM_NON_ROOT"
+        "true"
+        "--setenv"
+        "LITELLM_UI_PATH"
+        "/tmp/litellm-state/ui"
         "--setenv"
         "SSL_CERT_FILE"
         "/etc/ssl/certs/ca-certificates.crt"
@@ -167,27 +197,30 @@ in rec {
         "true"
         "--setenv"
         "PRISMA_CLI_PATH"
-        "${pkgs.prisma_6}/bin/prisma"
+        "${prismaCli}/bin/prisma"
         "--setenv"
         "PRISMA_QUERY_ENGINE_BINARY"
         queryEnginePath
         "--setenv"
         "PRISMA_SCHEMA_ENGINE_BINARY"
         schemaEnginePath
+        "--cap-drop"
+        "ALL"
       ]
       ++ envFileBindFlags
+      ++ envFileMaskFlags
       ++ envFlags
-      ++ lib.optionals (cfg.package ? pythonPath) [
+      ++ lib.optionals (packageFinal ? pythonPath) [
         "--setenv"
         "PYTHONPATH"
-        cfg.package.pythonPath
+        packageFinal.pythonPath
       ];
   in
     pkgs.writeShellScriptBin "litellm-sandboxed" ''
       set -euo pipefail
 
       LITELLM_STATE_DIR="${stateDir}"
-      mkdir -p "$LITELLM_STATE_DIR"
+      mkdir -p "$LITELLM_STATE_DIR/ui"
 
       exec ${pkgs.bubblewrap}/bin/bwrap ${lib.escapeShellArgs bwrapArgs} \
         --bind "$LITELLM_STATE_DIR" /tmp/litellm-state \

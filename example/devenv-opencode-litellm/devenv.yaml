@@ -2,9 +2,6 @@
 inputs:
   nixpkgs:
     url: github:cachix/devenv-nixpkgs/rolling
-  sops-nix:
-    url: github:Mic92/sops-nix
-    flake: true
   harness-flake:
     url: ../../.
     flake: true

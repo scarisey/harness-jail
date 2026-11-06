@@ -1,4 +1,3 @@
-# nix/litellm/home-manager-module.nix
 {
   config,
   pkgs,

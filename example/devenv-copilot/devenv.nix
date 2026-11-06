@@ -20,8 +20,9 @@
       "COPILOT_GITHUB_TOKEN"
     ];
     clearEnv = true;
-    environmentFile = "${toString ./.}/.secrets/harness-flake/default/environment_file";
-    readWritePaths = [../../.];
+    # SecretSpec stores this under ~/.config/harness-jail, outside the project
+    # root and outside every path mounted into the sandbox.
+    environmentFile = "${builtins.getEnv "HOME"}/.config/harness-jail/secrets/harness-flake/default/environment_file";
     homeDir = ./.home;
   };
 }
