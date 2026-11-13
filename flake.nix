@@ -73,8 +73,38 @@
         };
       });
 
-    checks = forAllSystems ({pkgs, ...}:
+    checks = forAllSystems ({pkgs, ...}: let
+      networkFilter = import ./modules/harness/network-filter.nix {
+        inherit (pkgs) lib pkgs;
+      };
+      filterFile =
+        (networkFilter.mk {
+          cfg = {
+            enableNetwork = true;
+            networkFilter.patterns = [
+              "example.com"
+              "*.example.com"
+              "q?.example.com"
+              "[ab]c.example.com"
+              "[!ab]c.example.com"
+            ];
+          };
+        })
+        .filterFile;
+      expectedFilter = pkgs.writeText "harness-jail-network-filter-expected" ''
+        example.com
+        *.example.com
+        q?.example.com
+        [ab]c.example.com
+        [!ab]c.example.com
+      '';
+    in
       nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+        harness-network-filter-glob = pkgs.runCommand "harness-network-filter-glob" {} ''
+          diff -u ${expectedFilter} ${filterFile}
+          touch $out
+        '';
+        nixos-harness-network-filter = pkgs.callPackage ./example/nixos-harness-network-filter {inherit self;};
         nixos-harness-one-shot = pkgs.callPackage ./example/nixos-harness-one-shot {inherit self;};
         nixos-headroom = pkgs.callPackage ./example/nixos-headroom {inherit self;};
         nixos-opencode-litellm = pkgs.callPackage ./example/nixos-opencode-litellm {inherit self;};

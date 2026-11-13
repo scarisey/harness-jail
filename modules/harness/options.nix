@@ -70,7 +70,36 @@ in {
     enableNetwork = mkOption {
       type = types.bool;
       default = false;
-      description = "Enable network access.";
+      description = ''
+        Enable network access. When `networkFilter.patterns` is non-empty,
+        the sandbox does not share the host network namespace; instead it
+        receives access only to the allowlisted hosts through a local proxy.
+      '';
+    };
+
+    networkFilter.patterns = mkOption {
+      type = types.listOf types.str;
+      default = [];
+      description = ''
+        Allowlist of hostname glob patterns. Requires `enableNetwork = true`.
+        Empty disables filtering.
+
+        Patterns match the hostname only (not scheme, path, query, or port).
+        Matching is case-sensitive (libc `fnmatch`), so write patterns in
+        lowercase; clients that send a mixed-case host are denied. Supported
+        glob syntax: `*`, `?`, `[abc]`, and `[!abc]`. `*.example.com` matches
+        subdomains but not `example.com` itself; list both when needed.
+        Patterns must not contain whitespace or `#`.
+
+        The sandbox is given no direct network route. Applications must honor
+        the standard proxy environment variables (`HTTP_PROXY`, `HTTPS_PROXY`,
+        `ALL_PROXY`, and their lowercase variants). The wrapper sets these
+        variables after `environment` and `environmentFile`, so they cannot be
+        redirected. Applications that ignore them fail closed. Only HTTP and
+        HTTPS are proxied; SSH, raw TCP, and QUIC/HTTP3 are unavailable while
+        filtering is enabled.
+      '';
+      example = literalExpression ''["api.openai.com" "*.openai.com"]'';
     };
 
     readOnlyPaths = mkOption {

@@ -247,6 +247,61 @@ readable; store secrets outside mounted paths when possible.
 Network access is disabled by default. Set `enableNetwork = true` to share the
 host network namespace.
 
+To allow only selected hosts, keep `enableNetwork = true` and set
+`networkFilter.patterns`:
+
+```nix
+{
+  services.harness-jail = {
+    enableNetwork = true;
+    networkFilter.patterns = [
+      "api.openai.com"
+      "*.openai.com"
+      "127.0.0.1"
+    ];
+  };
+}
+```
+
+With patterns set, the sandbox does **not** share the host network namespace. It
+gets a loopback-only network and a local proxy endpoint, and the wrapper sets
+`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and their lowercase forms to point at
+that endpoint. These values are applied after `environment` and
+`environmentFile`, so they cannot be redirected to another proxy. A filtering
+proxy runs in the host network namespace and forwards only requests whose
+hostname matches the allowlist. Direct connections to external hosts and DNS
+queries from inside the sandbox are not available.
+
+Patterns match the request hostname only. They do not match the scheme, path,
+query, or port, so allowlisting a host permits every port on that host. Matching
+is case-sensitive, so write patterns in lowercase; a client that sends a
+mixed-case host (for example `API.example.com`) is denied. Supported glob
+syntax:
+
+| Syntax | Matches |
+| --- | --- |
+| `*` | any sequence of characters, including dots |
+| `?` | exactly one character |
+| `[abc]` | one character from the set |
+| `[!abc]` | one character not in the set |
+
+For example, `*.example.com` matches `api.example.com` and
+`deep.api.example.com`, but not `example.com` itself. List both patterns when
+you need both. Patterns must not contain whitespace or `#`.
+
+Only clients that honor the standard proxy environment variables can use the
+network. Applications that ignore them fail closed. SSH, raw TCP, QUIC/HTTP3,
+and other non-HTTP protocols are not proxied and are unavailable while
+filtering. HTTPS uses `CONNECT`; there is no TLS interception, so the sandbox
+still validates the real server certificate.
+
+Allowlisting a loopback or private address grants access to everything the
+harness user can reach at that address. For example, allowlisting `127.0.0.1`
+makes every host-local port reachable through the proxy.
+
+`networkFilter.patterns` requires `enableNetwork = true`. An empty list disables
+filtering and restores normal `enableNetwork` behavior.
+
 Even with networking disabled, the sandbox mounts `/etc/resolv.conf` and the Nix
 CA bundle at `/etc/ssl/certs/ca-certificates.crt`. The host's custom CA
 certificates are not included. If you need them, mount a bundle with
@@ -280,7 +335,8 @@ Available as `nixosModules.harness-jail`, `homeManagerModules.harness-jail`, and
 | `wrapperName` | string | `"harness"` | Name of the installed wrapper command. |
 | `args` | list of string | `[]` | Arguments prepended to the executable. |
 | `extraPackages` | list of package | common tools | Packages added to `PATH` inside the sandbox. |
-| `enableNetwork` | bool | `false` | Share the host network namespace. |
+| `enableNetwork` | bool | `false` | Share the host network namespace, or enable the allowlist proxy when `networkFilter.patterns` is set. |
+| `networkFilter.patterns` | list of string | `[]` | Hostname allowlist globs, matched case-sensitively. Requires `enableNetwork = true`; empty disables filtering. |
 | `readOnlyPaths` | list of path | `[]` | Host paths mounted read-only at the same path. |
 | `readWritePaths` | list of path | `[]` | Host paths mounted read-write at the same path. |
 | `clearEnv` | bool | `true` | Discard the host environment. |
@@ -515,6 +571,31 @@ The same pattern works for Headroom and LiteLLM.
 
 In devenv, the project root is mounted read-write automatically.
 
+### Restrict network access to an allowlist
+
+```nix
+{
+  services.harness-jail = {
+    enable = true;
+    package = pkgs.opencode;
+    command = "opencode";
+    enableNetwork = true;
+    networkFilter.patterns = [
+      "api.openai.com"
+      "*.openai.com"
+      "api.anthropic.com"
+      "127.0.0.1"
+    ];
+  };
+}
+```
+
+The sandbox can reach only the listed hostnames, through the built-in proxy.
+Add every provider, package registry, and local service the harness needs. If a
+workflow relies on SSH, raw TCP, or a tool that ignores proxy environment
+variables, it will not work under filtering; use `enableNetwork = true` without
+patterns for unrestricted networking instead.
+
 ### Run a custom tool
 
 `harness-jail` is not tied to an LLM CLI:
@@ -565,6 +646,7 @@ The [`example/`](./example) directory contains complete, runnable setups:
 | [`devenv-opencode-simple`](./example/devenv-opencode-simple) | Minimal opencode setup. |
 | [`devenv-opencode-litellm`](./example/devenv-opencode-litellm) | opencode plus LiteLLM and PostgreSQL in devenv. |
 | [`home-manager-opencode-litellm`](./example/home-manager-opencode-litellm) | Home Manager harness and LiteLLM user services, with a NixOS test. |
+| [`nixos-harness-network-filter`](./example/nixos-harness-network-filter) | NixOS VM test for allowlisted HTTP access, denied hosts, and fail-closed direct connections. |
 | [`nixos-harness-one-shot`](./example/nixos-harness-one-shot) | NixOS wrapper with `daemon = false`. |
 | [`nixos-headroom`](./example/nixos-headroom) | Headroom service and liveness check. |
 | [`nixos-opencode-litellm`](./example/nixos-opencode-litellm) | NixOS opencode plus LiteLLM and PostgreSQL, with a NixOS test. |
@@ -605,6 +687,27 @@ processes with `devenv up` and check its output.
 Set `enableNetwork = true`. Networking is disabled by default, including DNS.
 If you use custom certificates, mount them with `readOnlyPaths` and set
 `SSL_CERT_FILE`.
+
+### An allowlisted host is unreachable
+
+- Check that `enableNetwork = true` is also set.
+- Patterns match the hostname, not the URL. `https://api.example.com/v1` is
+  matched as `api.example.com`.
+- Matching is case-sensitive. Use lowercase patterns; a client that sends
+  `API.example.com` will not match `api.example.com`.
+- `*.example.com` does not match `example.com`; list both if needed.
+- Verify that the application honors `HTTP_PROXY`, `HTTPS_PROXY`, or `ALL_PROXY`.
+  From inside the sandbox, try `curl -v https://the-host/`.
+- Filtering only proxies HTTP and HTTPS. SSH, raw TCP, QUIC/HTTP3, and other
+  protocols do not work while filtering is enabled.
+
+### The filtering proxy fails to start
+
+The wrapper creates a private proxy directory under `${XDG_RUNTIME_DIR:-/tmp}`
+and removes it on exit. Check that this directory is writable by the user or
+service running the harness. If a previous run was killed with `SIGKILL`, a
+stale `harness-jail-proxy.*` directory may remain in `/tmp`; it is safe to
+remove.
 
 ### The agent cannot see my files or credentials
 

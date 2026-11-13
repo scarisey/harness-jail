@@ -19,6 +19,8 @@
   bindSame = flag: path: bind flag path path;
 
   bindAll = flag: paths: concatMap (bindSame flag) paths;
+
+  networkFilter = import ./network-filter.nix {inherit lib pkgs;};
 in {
   # Build the command that runs cfg.command inside bubblewrap.
   #
@@ -29,6 +31,8 @@ in {
     extraReadWritePaths ? [],
   }: let
     staticHome = cfg.homeDir != null;
+
+    proxy = networkFilter.mk {inherit cfg;};
 
     readOnlyPaths = unique (map toString cfg.readOnlyPaths);
     readWritePaths = unique (map toString (
@@ -77,7 +81,12 @@ in {
     suffixArgs =
       bindAll "--ro-bind" readOnlyPaths
       ++ bindAll "--bind" readWritePaths
-      ++ optional cfg.enableNetwork "--share-net";
+      ++ optional (cfg.enableNetwork && !proxy.enabled) "--share-net";
+
+    commandArgs =
+      if proxy.enabled
+      then [proxy.relayScript wrappedCommand] ++ cfg.args
+      else [wrappedCommand] ++ cfg.args;
 
     # The wrapper sources the file outside the sandbox. Mask it afterwards so
     # a process inside cannot read the secrets from a mounted directory.
@@ -96,7 +105,8 @@ in {
     # always passed through so the inner script can bind it.
     envFlags =
       optionalString cfg.clearEnv " -i"
-      + optionalString (!staticHome) " HARNESS_JAIL_HOME=\"$HARNESS_JAIL_HOME\"";
+      + optionalString (!staticHome) " HARNESS_JAIL_HOME=\"$HARNESS_JAIL_HOME\""
+      + optionalString proxy.enabled " HARNESS_JAIL_PROXY_DIR=\"$HARNESS_JAIL_PROXY_DIR\"";
 
     # Sourcing the env file here (rather than in the outer script) lets the
     # same inner script handle both clearEnv modes.
@@ -109,6 +119,12 @@ in {
         else ''"$HARNESS_JAIL_HOME"''
       }
       unset HARNESS_JAIL_HOME
+      ${optionalString proxy.enabled ''
+        proxy_dir=$HARNESS_JAIL_PROXY_DIR
+        unset HARNESS_JAIL_PROXY_DIR
+      ''}
+      # Keep internal paths out of reach of environmentFile.
+      readonly sandbox_home${optionalString proxy.enabled " proxy_dir"}
 
       ${optionalString (cfg.environmentFile != null) ''
         set -a
@@ -119,6 +135,9 @@ in {
       ${optionalString cfg.clearEnv "unset PWD SHLVL _"}
 
       bwrap_args=(${escapeShellArgs prefixArgs})
+      ${optionalString proxy.enabled ''
+        bwrap_args+=(--tmpfs /run --dir /run/harness-jail --ro-bind "$proxy_dir" /run/harness-jail)
+      ''}
       ${optionalString cfg.clearEnv ''
         # HOME comes after the prefix but before defaults and the env file.
         bwrap_args+=(--setenv HOME "$sandbox_home")
@@ -132,12 +151,17 @@ in {
         done < <(${pkgs.coreutils}/bin/env -0)
       ''}
       bwrap_args+=(${escapeShellArgs (setenvArgs cfg.environment)})
+      ${optionalString proxy.enabled ''
+        # Proxy variables come last so inherited, file, and explicit values
+        # cannot accidentally point the sandbox at a different proxy.
+        bwrap_args+=(${escapeShellArgs (setenvArgs proxy.proxyEnv)})
+      ''}
       ${optionalString (!staticHome) ''
         bwrap_args+=(--bind "$sandbox_home" "$sandbox_home")
       ''}
       bwrap_args+=(${escapeShellArgs suffixArgs})
       bwrap_args+=(${escapeShellArgs maskArgs})
-      bwrap_args+=(-- ${escapeShellArgs ([wrappedCommand] ++ cfg.args)} "$@")
+      bwrap_args+=(-- ${escapeShellArgs commandArgs} "$@")
 
       exec ${pkgs.bubblewrap}/bin/bwrap "''${bwrap_args[@]}"
     '';
@@ -145,7 +169,20 @@ in {
     pkgs.writeShellScript "bwrap-harness" ''
       set -eo pipefail
       ${runtimeHomeSetup}
-      exec ${pkgs.coreutils}/bin/env${envFlags} \
-        ${pkgs.bash}/bin/bash --noprofile --norc ${innerScript} "$@"
+      ${optionalString proxy.enabled proxy.cleanupDefinition}
+      ${optionalString proxy.enabled "trap proxy_cleanup EXIT INT TERM"}
+      ${optionalString proxy.enabled proxy.hostSetup}
+      ${optionalString proxy.enabled ''
+        ${pkgs.coreutils}/bin/env${envFlags} \
+          ${pkgs.bash}/bin/bash --noprofile --norc ${innerScript} "$@" &
+        harness_pid=$!
+        trap 'kill -TERM "$harness_pid" 2>/dev/null || true' TERM INT
+        wait "$harness_pid"
+        exit $?
+      ''}
+      ${optionalString (!proxy.enabled) ''
+        exec ${pkgs.coreutils}/bin/env${envFlags} \
+          ${pkgs.bash}/bin/bash --noprofile --norc ${innerScript} "$@"
+      ''}
     '';
 }
