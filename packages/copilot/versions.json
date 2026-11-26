@@ -1,6 +1,6 @@
 {
-  "version": "1.0.109",
-  "sha256Linux_x64": "sha256-jqoc4SskRwLzLo7HE0dQ35XGTLea2A9nN/2T1U1wKQg=",
-  "sha256Linux_arm64": "sha256-/ukLQ7SXRTTI69qPSrdSeRYTeSqzjHgZ7I8ku/LBC98=",
-  "sha256Darwin_arm64": "sha256-0AVj1UgeiidbQfeO63HhmpAwmpCCVVdSk79V6XeMw3o="
+  "version": "1.0.116",
+  "sha256Linux_x64": "sha256-yicceGG6o8n7iyigQqurjWzxHqBUj9Mas9kWzWz0+e8=",
+  "sha256Linux_arm64": "sha256-Ip7mZbwxvE4XKI/+Nebm75euSB1tFfp0I1Rv0dFD6WY=",
+  "sha256Darwin_arm64": "sha256-rrVtBAMeJkPaEYExlIr4XLcgeRi+82mAcY2JJTS+KXA="
 }
